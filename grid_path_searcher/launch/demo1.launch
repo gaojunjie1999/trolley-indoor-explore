@@ -1,0 +1,61 @@
+<launch>
+
+	<arg name="map_size_x" default="4.0"/>
+	<arg name="map_size_y" default="4.0"/>
+	<arg name="map_size_z" default="2.0"/>
+
+	<arg name="start_x" default=" 0.3"/>
+	<arg name="start_y" default=" -2.0"/>
+	<arg name="start_z" default=" 1.0"/>
+
+	
+	<node pkg="grid_path_searcher" type="demo_node" name="demo_node" output="screen" required = "true">
+		<remap from="~waypoints"       to="/waypoint_generator/waypoints"/>
+		<remap from="~map"             to="/random_complex/global_map"/>
+
+    <param name="layout/height_thresh"   value="-1.0" /> 
+    <param name="layout/frame_id"   value="world" /> 
+    
+
+	</node>
+	
+	<!--
+	<node pkg ="grid_path_searcher" name ="random_complex" type ="random_complex" output = "screen">
+		<param name="init_state_x"   value="$(arg start_x)"/>
+		<param name="init_state_y"   value="$(arg start_y)"/>
+
+		<param name="map/x_size"     value="$(arg map_size_x)" />
+		<param name="map/y_size"     value="$(arg map_size_y)" />
+		<param name="map/z_size"     value="$(arg map_size_z)" />
+
+		<param name="map/resolution" value="0.1"/>
+		<param name="sensing/rate"   value="100"/>
+		<param name="ObstacleShape/seed" value="-1"/>
+
+		<param name="map/obs_num"    value="15"/>  	
+		<param name="ObstacleShape/lower_rad" value="1.2"/>
+		<param name="ObstacleShape/upper_rad" value="0.7"/>
+		<param name="ObstacleShape/lower_hei" value="2.0"/>
+		<param name="ObstacleShape/upper_hei" value="2.0"/>
+
+		<param name="x/width" value="1.55"/> 
+		<param name="y/width" value="0.1"/> 
+
+		<param name="step/one" value="10"/> 
+		<param name="step/two" value="10"/>   
+
+		
+		   
+		 
+
+	</node>
+	<node pkg="waypoint_generator" name="waypoint_generator" type="waypoint_generator" output="screen">
+		<remap from="~goal" to="/goal"/>
+		<param name="waypoint_type" value="manual-lonely-waypoint"/>
+	</node>
+	-->
+	
+</launch>
+
+
+    
