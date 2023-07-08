@@ -114,7 +114,7 @@ void pointCloudCallback(const sensor_msgs::PointCloud2::ConstPtr& point_msg)
   //首先将接收到的ROS格式的点云消息sensor_msgs::PointCloud2转化为PCL格式的消息    PointCloud<pcl::PointXYZITR>
     pcl::fromROSMsg(*point_msg, cloud_msg);
     cloud_msg.header.frame_id = "map";
- /*
+ 
     //根据雷达型号，创建Mat矩阵，由于在此使用的雷达为128线，每条线上有1281个点，所以创建了一个大小为128*1281尺寸的矩阵，并用0元素初始化。
     int horizon_num = int(cloud_msg.points.size() / 16);
     cv::Mat range_mat = cv::Mat(16, horizon_num, CV_8UC3, cv::Scalar::all(0));
@@ -123,13 +123,12 @@ void pointCloudCallback(const sensor_msgs::PointCloud2::ConstPtr& point_msg)
     int scan_num = 16;
     const double PI = 3.1415926;
     const double ANG = 57.2957795;
-
     int min_idx = 1000000; int max_idx = -1000000;
     //遍历每个点，计算该点对应的Mat矩阵中的索引，并为该索引对应的Mat矩阵元素赋值
     for(const auto pt : cloud_msg.points)
     {
       //cout<<"pointxyz: "<<pt.x<<" "<<pt.y<<" "<<pt.z<<" angle="<<h_angle<<" ring="<<pt.ring<<endl;
-      if (pcl_isfinite(pt.x) || pcl_isfinite(pt.y) || pcl_isfinite(pt.z)) {
+      if (!pcl_isfinite(pt.x) || !pcl_isfinite(pt.y) || !pcl_isfinite(pt.z)) {
         continue;
       }
       
@@ -155,7 +154,7 @@ void pointCloudCallback(const sensor_msgs::PointCloud2::ConstPtr& point_msg)
       range_mat.at<double>(row_i, col_i) = range;
       //如果想转化为彩色的深度图，可以注释上面这一句，改用下面这一句；
       //range_mat.at<cv::Vec3b>(row_i, col_i) = cv::Vec3b(254-int(pt.x *2), 254- int(fabs(pt.y) / 0.5), 254-int(fabs((pt.z + 1.0f) /0.05)));
-    }*/
+    }
     
     //cv::namedWindow("map",CV_WINDOW_NORMAL);//AUTOSIZE //创建一个窗口，用于显示深度图
     //cv::imshow("map",range_mat); //在这个窗口输出图片。
