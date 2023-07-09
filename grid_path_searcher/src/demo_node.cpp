@@ -122,12 +122,10 @@ void pointCloudCallback(const sensor_msgs::PointCloud2::ConstPtr& point_msg)
     int row_i, col_i; 
     int scan_num = 16;
     const double PI = 3.1415926;
-    const double ANG = 57.2957795;
     int min_idx = 1000000; int max_idx = -1000000;
     //遍历每个点，计算该点对应的Mat矩阵中的索引，并为该索引对应的Mat矩阵元素赋值
     for(const auto pt : cloud_msg.points)
     {
-      //cout<<"pointxyz: "<<pt.x<<" "<<pt.y<<" "<<pt.z<<" angle="<<h_angle<<" ring="<<pt.ring<<endl;
       if (!pcl_isfinite(pt.x) || !pcl_isfinite(pt.y) || !pcl_isfinite(pt.z)) {
         continue;
       }
@@ -139,18 +137,15 @@ void pointCloudCallback(const sensor_msgs::PointCloud2::ConstPtr& point_msg)
 
       row_i = pt.ring;
       double h_angle = 180 / PI * std::atan2(pt.y, pt.x) + 180;
-      int col = ceil(h_angle / 360 * horizon_num);
-      if (col < min_idx) {min_idx = col;}
-      if (col > max_idx) {max_idx = col;}
-      cout<<"row="<<pt.ring<<" col="<<col<<" max="<<max_idx<<" min="<<min_idx<<endl;
-
-
-      col_i = h_angle / 360 * horizon_num;   
+      col_i = ceil(h_angle / 360 * horizon_num) - 1;  
+      cout<<"pointxyz: "<<pt.x<<" "<<pt.y<<" "<<pt.z<<" row="<<row_i<<" col="<<col_i<<endl; 
+     
       //忽略索引不合法的点
       if(row_i < 0 || row_i >= scan_num)
           continue;
       if(col_i < 0 || col_i >= horizon_num)
           continue;
+      cout<<"16*"<<horizon_num<<endl;
       range_mat.at<double>(row_i, col_i) = range;
       //如果想转化为彩色的深度图，可以注释上面这一句，改用下面这一句；
       //range_mat.at<cv::Vec3b>(row_i, col_i) = cv::Vec3b(254-int(pt.x *2), 254- int(fabs(pt.y) / 0.5), 254-int(fabs((pt.z + 1.0f) /0.05)));
