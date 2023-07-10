@@ -346,10 +346,10 @@ void transform2RangeImage(const pcl::PointCloud<pcl::PointR>& cloudIn,
 
     float distance = CalculateRangeXY( ngc_cloudOut.points[i]);
     int ringnum = ngc_cloudOut.points[i].ring;
-    int image_index = ngc_cloudOut.points[i].pcaketnum * 16 + (16 - ringnum);
+    int image_index = ngc_cloudOut.points[i].pcaketnum * 16 + (15 - ringnum);
 
     Range r;
-    r.ring_i = 31 -ringnum;
+    r.ring_i = 15 -ringnum;
     r.frame_j = ngc_cloudOut.points[i].pcaketnum;
     r.count_num = i;
     r.range_xy = ngc_cloudOut.points[i].z;
@@ -360,36 +360,47 @@ void transform2RangeImage(const pcl::PointCloud<pcl::PointR>& cloudIn,
 
 void pointCloudCallback(const sensor_msgs::PointCloud2::ConstPtr& point_msg)
 {
+  time_begin = ros::Time::now();
+  /*double duration = (ros::Time::now() - time_begin).toSec();
+  if (duration < 1) {
+    return;
+  } else {
     time_begin = ros::Time::now();
-    /*double duration = (ros::Time::now() - time_begin).toSec();
-    if (duration < 1) {
-      return;
-    } else {
-      time_begin = ros::Time::now();
-    }*/
+  }*/
 
-    
+  
 
-    pcl::fromROSMsg(*point_msg, cloud_msg);
-    cloud_msg.header.frame_id = "map";
-    
-    cloud_ngc.clear(); 
-    cloud_g.clear();
-    cloud_c.clear();
-    transform2RangeImage(cloud_msg, cloud_ngc, cloud_g, cloud_c, range_image);
-    cout<<"total="<<cloud_msg.points.size()<<" ground pcl size="<<cloud_g.points.size()
-      <<" ceilling pcl size="<<cloud_c.points.size()<<" left size="<<cloud_ngc.points.size()<<endl;
+  pcl::fromROSMsg(*point_msg, cloud_msg);
+  cloud_msg.header.frame_id = "map";
+  
+  cloud_ngc.clear(); 
+  cloud_g.clear();
+  cloud_c.clear();
+  transform2RangeImage(cloud_msg, cloud_ngc, cloud_g, cloud_c, range_image);
+  cout<<"total="<<cloud_msg.points.size()<<" ground pcl size="<<cloud_g.points.size()
+    <<" ceilling pcl size="<<cloud_c.points.size()<<" left size="<<cloud_ngc.points.size()<<endl;
 
+
+
+
+  cloud_ngc.header.frame_id = "map";
+	cloud_ngc.height = 1;
+	cloud_ngc.width = cloud_ng->points.size();
+	cloud_ngc.is_dense = false;
+  cloud_g.header.frame_id = "map";
+	cloud_g.height = 1;
+	cloud_g.width = cloud_ng->points.size();
+	cloud_g.is_dense = false;
+  cloud_c.header.frame_id = "map";
+  cloud_c.height = 1;
+	cloud_c.width = cloud_ng->points.size();
+	cloud_c.is_dense = false;
+
+  double ringnum=(cloud_msg.points.size() / 16) - 1;
+	vector<int> cluster_index = range_cluster(range_image,ringnum);
+	
 
 /*
-
-
-
-
-
-
-
- 
     //根据雷达型号，创建Mat矩阵，由于在此使用的雷达为128线，每条线上有1281个点，所以创建了一个大小为128*1281尺寸的矩阵，并用0元素初始化。
     int horizon_num = int(cloud_msg->points.size() / 16);
     cv::Mat range_mat = cv::Mat(16, horizon_num, CV_64FC3, cv::Scalar::all(0));
@@ -463,17 +474,14 @@ void visCallback(const ros::TimerEvent& /*event*/) {
   sensor_msgs::PointCloud2 pub_cloud;
   
   //publish ground
-  cloud_g.header.frame_id = "map";
   pcl::toROSMsg(cloud_g, pub_cloud);
   g_pub.publish(pub_cloud);
 
   //publish ceilling
-  cloud_c.header.frame_id = "map";
   pcl::toROSMsg(cloud_c, pub_cloud);
   c_pub.publish(pub_cloud);
 
   //publish no_ground
-  cloud_ngc.header.frame_id = "map";
   pcl::toROSMsg(cloud_ngc, pub_cloud);
   ngc_pub.publish(pub_cloud);
 }
