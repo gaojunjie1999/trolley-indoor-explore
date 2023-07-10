@@ -1,9 +1,9 @@
 <?xml version="1.0"?>
 <package>
-  <name>grid_path_searcher</name>
+  <name>velodyne_pcl_parser</name>
   <version>0.0.1</version>
-  <description> Path searching methods on 3d grid map </description>
-  <maintainer email="ustfeigao@gmail.com">fgaoaa</maintainer>
+  <description> velodyne_pcl_parser </description>
+  <maintainer email="1097808786@qq.com">GJJ</maintainer>
   <license>BSD</license>
 
   <buildtool_depend>catkin</buildtool_depend>

@@ -9,7 +9,7 @@
 	<arg name="start_z" default=" 1.0"/>
 
 	
-	<node pkg="grid_path_searcher" type="demo_node" name="demo_node" output="screen" required = "true">
+	<node pkg="velodyne_pcl_parser" type="velodyne_pcl_parser" name="velodyne_pcl_parser" output="screen" required = "true">
 		<remap from="~waypoints"       to="/waypoint_generator/waypoints"/>
 		<remap from="~map"             to="/random_complex/global_map"/>
 

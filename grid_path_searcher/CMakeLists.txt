@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 2.8.3)
-project(grid_path_searcher)
+project(velodyne_pcl_parser)
 
 find_package(PCL REQUIRED)
 
@@ -34,11 +34,12 @@ include_directories(
 
 set(CMAKE_CXX_FLAGS "-std=c++14 ${CMAKE_CXX_FLAGS} -O3 -Wall") # -Wextra -Werror
 
-add_executable( demo_node 
+add_executable(velodyne_pcl_parser
     src/demo_node.cpp
+    src/ground_remove2.cpp
     )
 
-target_link_libraries(demo_node 
+target_link_libraries(velodyne_pcl_parser 
     ${catkin_LIBRARIES}
     ${PCL_LIBRARIES} 
     ${OpenCV_LIBRARIES}

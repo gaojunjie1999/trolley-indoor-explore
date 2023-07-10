@@ -50,7 +50,7 @@
 #include <message_filters/sync_policies/exact_time.h>
 #include <message_filters/time_synchronizer.h>
 #include <tf/transform_broadcaster.h>
-#include <lidar_point.h>
+#include "ground_remove2.h"
 
 
 #define logit(x) (log((x) / (1 - (x))))
@@ -63,7 +63,7 @@ typedef message_filters::Synchronizer<SyncPolicyImageOdom>* SynchronizerImageOdo
 
 using namespace std;
 using namespace Eigen;
-
+const float PI = 3.1415926;
 // pointcloud segmentation: wall and ground detection
 struct Range {
 	float range_xy;
@@ -75,13 +75,15 @@ struct Range {
 
 string frame_id_;
 double height_thresh, range_min, range_max;
-ros::Publisher original_map_pub_, no_floor_pub_, floor_pub_;
+ros::Publisher ng_pub, g_pub;
 ros::Subscriber odom_sub_, depth_sub_, cloud_sub_;
 ros::Timer vis_timer_;
-pcl::PointCloud<pcl::PointXYZI> cloud_msg;
-pcl::PointCloud<pcl::PointXYZITR> cloud_ng, cloud_g;
+//pcl::PointCloud<pcl::PointXYZI> cloud_msg;
+pcl::PointCloud<pcl::PointR> cloud_msg;
+pcl::PointCloud<pcl::PointXYZITR> cloud_ng, cloud_g, cloud_nc, cloud_c;
 unordered_map<int, Range> range_image;
-ros::Time time_begin; int idx_begin = 0;
+ros::Time time_begin; 
+int idx_begin = 0;
 
 
 // camera position and pose data
@@ -97,7 +99,104 @@ int image_cnt_;
 void pointCloudCallback(const sensor_msgs::PointCloud2::ConstPtr& point_msg);
 void depthOdomCallback(const sensor_msgs::ImageConstPtr& img,
                                const geometry_msgs::PoseStampedConstPtr& odom);
+void visCallback(const ros::TimerEvent& /*event*/);
                                 
+
+float Polar_angle_cal(float x, float y) {
+	float temp_tangle = 0;
+	if (x == 0 && y == 0) {
+		temp_tangle = 0;
+	} else if (y >= 0) {
+		temp_tangle = (float) atan2(y, x);
+	} else if (y <= 0) {
+		temp_tangle = (float) atan2(y, x) + 2 * PI;
+	}
+	return temp_tangle;
+}
+//HSV转rgb
+vector<float> hsv2rgb(vector<float>& hsv) {
+	vector<float> rgb(3);
+	float R, G, B, H, S, V;
+	H = hsv[0];
+	S = hsv[1];
+	V = hsv[2];
+	if (S == 0) {
+		rgb[0] = rgb[1] = rgb[2] = V;
+	} else {
+
+		int i = int(H * 6);
+		float f = (H * 6) - i;
+		float a = V * (1 - S);
+		float b = V * (1 - S * f);
+		float c = V * (1 - S * (1 - f));
+		i = i % 6;
+		switch (i) {
+		case 0: {
+			rgb[0] = V;
+			rgb[1] = c;
+			rgb[2] = a;
+			break;
+		}
+		case 1: {
+			rgb[0] = b;
+			rgb[1] = V;
+			rgb[2] = a;
+			break;
+		}
+		case 2: {
+			rgb[0] = a;
+			rgb[1] = V;
+			rgb[2] = c;
+			break;
+		}
+		case 3: {
+			rgb[0] = a;
+			rgb[1] = b;
+			rgb[2] = V;
+			break;
+		}
+		case 4: {
+			rgb[0] = c;
+			rgb[1] = a;
+			rgb[2] = V;
+			break;
+		}
+		case 5: {
+			rgb[0] = V;
+			rgb[1] = a;
+			rgb[2] = b;
+			break;
+		}
+		}
+	}
+
+	return rgb;
+}
+
+//可视化
+
+template<typename T> string toString(const T& t) {
+	ostringstream oss;
+	oss << t;
+	return oss.str();
+}
+
+
+
+template<typename PointInT>
+float CalculateRangeXY(const PointInT pointIn) {
+
+	return sqrt(pointIn.x * pointIn.x + pointIn.y * pointIn.y);
+}
+
+template<typename PointInT>
+float CalculateRangeZXY(const PointInT pointIn) {
+
+	return sqrt(
+			pointIn.x * pointIn.x + pointIn.y * pointIn.y
+					+ (pointIn.z) * (pointIn.z));
+}
+
 
 int main(int argc, char** argv)
 {
@@ -112,11 +211,10 @@ int main(int argc, char** argv)
     message_filters::Synchronizer<SyncPolicyImageOdom> sync_image_odom_(SyncPolicyImageOdom(100), depth_sub_, odom_sub_);
     sync_image_odom_.registerCallback(boost::bind(depthOdomCallback, _1, _2));*/
 
-    //vis_timer_ = nh.createTimer(ros::Duration(0.05), visCallback); 
+    vis_timer_ = nh.createTimer(ros::Duration(0.05), visCallback); 
 
-    original_map_pub_ = nh.advertise<sensor_msgs::PointCloud2>("/layout/original_map", 10);
-    no_floor_pub_ = nh.advertise<sensor_msgs::PointCloud2>("/layout/no_floor", 10);
-    floor_pub_ = nh.advertise<sensor_msgs::PointCloud2>("/layout/floor", 10);
+    ng_pub = nh.advertise<sensor_msgs::PointCloud2>("/trolley/lidar/no_ground", 10);
+    g_pub = nh.advertise<sensor_msgs::PointCloud2>("/trolley/lidar/ground", 10);
 
     nh.param("layout/height_thresh", height_thresh, 0.2);
     nh.param("layout/frame_id", frame_id_, string("world"));
@@ -139,6 +237,7 @@ void CloudFilter(const pcl::PointCloud<pcl::PointXYZITR>& cloudIn,
 		pcl::PointCloud<pcl::PointXYZITR>& cloudOut, float x_min, float x_max,
 		float y_min, float y_max, float z_min, float z_max) {
   //TODO
+  cloudOut = cloudIn;
   return;
 
 	cloudOut.header = cloudIn.header;
@@ -165,9 +264,9 @@ void CloudFilter(const pcl::PointCloud<pcl::PointXYZITR>& cloudIn,
 	}
 }
 
-void transform2RangeImage(const pcl::PointCloud<pcl::PointXYZI>& cloudIn,
-		pcl::PointCloud<pcl::PointXYZITR>& ng_cloudOut,
-		  pcl::PointCloud<pcl::PointXYZITR>& g_cloudOut, 
+void transform2RangeImage(const pcl::PointCloud<pcl::PointR>& cloudIn,
+		pcl::PointCloud<pcl::PointXYZITR>& ng_cloudOut, pcl::PointCloud<pcl::PointXYZITR>& g_cloudOut, 
+      pcl::PointCloud<pcl::PointXYZITR>& nc_cloudOut, pcl::PointCloud<pcl::PointXYZITR>& c_cloudOut,
         unordered_map<int, Range> &unordered_map_out) 
 {
   int total_frame = (int)(cloudIn.points.size() / 16);
@@ -175,10 +274,34 @@ void transform2RangeImage(const pcl::PointCloud<pcl::PointXYZI>& cloudIn,
 	pcl::PointCloud<pcl::PointXYZITR>::Ptr cloud_filtered(new pcl::PointCloud<pcl::PointXYZITR>);
   cloud2range->points.resize(cloudIn.points.size());
 
+  double max_h{-100.0}, min_h{100.0}; 
+  for(const auto pt : cloudIn.points)
+  {
+    int row_i = pt.ring;
+    double h_angle = 180 / PI * std::atan2(pt.y, pt.x) + 180;
+    int col_i = ceil(h_angle / 360 * total_frame) - 1;  
+
+    if(row_i < 0 || row_i >= 16 || col_i < 0 || col_i >= total_frame) {
+      ROS_WARN("ROW_COL_IDX_ERROR");
+      continue;
+    }
+
+    cloud2range->points[col_i * 16 + row_i].x = pt.x ;
+    cloud2range->points[col_i * 16 + row_i].y = pt.y ;
+    cloud2range->points[col_i * 16 + row_i].z = pt.z ;
+    cloud2range->points[col_i * 16 + row_i].intensity = pt.intensity;
+    cloud2range->points[col_i * 16 + row_i].ring = row_i;
+    cloud2range->points[col_i * 16 + row_i].pcaketnum = col_i;
+
+    if(pt.z > max_h) {max_h = pt.z;}
+    if(pt.z < min_h) {min_h = pt.z;}
+    //cout<<"ring="<<row_i<<" col="<<col_i<<" x="<<pt.x<<" y="<<pt.y<<" z="<<pt.z<<" max_h="<<max_h<<" min_h="<<min_h<<endl;
+  }
+
+/*
 	for (int j = 0; j < total_frame; ++j) {
 		int num_odd = 8;                //基数从8位开始排
 		int num_even = 0;                //偶数从头
-
 		for (int i = 0; i < 16; ++i) {
 			if (float(i % 2) == 0.0) {
 				cloud2range->points[j * 16 + i].x = cloudIn.points[j * 16 + i].x ;
@@ -198,7 +321,7 @@ void transform2RangeImage(const pcl::PointCloud<pcl::PointXYZI>& cloudIn,
 				num_odd++;
 			}
 		} //按索引顺序排列
-  }
+  }*/
 
 	cloud2range->height = 1;
 	cloud2range->width = cloud2range->points.size();
@@ -207,56 +330,51 @@ void transform2RangeImage(const pcl::PointCloud<pcl::PointXYZI>& cloudIn,
 	float xmin = -350, xmax = 350, ymin = -300, ymax = 300, zmin = -100, zmax = 300;
   CloudFilter(*cloud2range, *cloud_filtered, xmin, xmax, ymin, ymax, zmin, zmax);
 
+  //PCA ground & ceilling removal
+  ros::Time time1 = ros::Time::now(); 
   GroundRemove2 ground_remove(3, 20, 1.0, 0.15);
-    
-  ground_remove.RemoveGround2(*cloud_filtered, g_cloudOut, ng_cloudOut);
+  ground_remove.RemoveGround2(*cloud_filtered, g_cloudOut, ng_cloudOut, c_cloudOut, nc_cloudOut);
+  //ROS_INFO("%f ms to remove ground",(ros::Time::now() - time1).toSec() * 1000);
+  //cout<<" ground pcl size="<<g_cloudOut.points.size()<<" left size="<<ng_cloudOut.points.size()<<endl;
 
+  for(int i = 0; i < ng_cloudOut.points.size(); ++i){
 
-	float x_limit_min = -1, x_limit_max = 1, y_limit_forward = 4.0,
-			y_limit_backward = -3;
+    float x = ng_cloudOut.points[i].x;
+    float y = ng_cloudOut.points[i].y;
+    float z = ng_cloudOut.points[i].z;
 
-        for(int i=0; i<ng_cloudOut.points.size(); ++i){
+    float distance = CalculateRangeXY( ng_cloudOut.points[i]);
+    int ringnum = ng_cloudOut.points[i].ring;
+    int image_index = ng_cloudOut.points[i].pcaketnum * 16 + (16 - ringnum);
 
-            float x = ng_cloudOut.points[i].x;
-	    float y = ng_cloudOut.points[i].y;
-	    float z = ng_cloudOut.points[i].z;
-       	    float distance = CalculateRangeXY( ng_cloudOut.points[i]);
-            /*if (distance > 30)
-				continue;
-			if ((x > x_limit_min && x < x_limit_max && y > y_limit_backward
-					&& y < y_limit_forward))
-				continue;
-
-			if ((z < -1 || z > 3))
-				continue;*/
-
-
-                        int ringnum = ng_cloudOut.points[i].ring;
-
-			int image_index = ng_cloudOut.points[i].pcaketnum * 16 + (31 - ringnum);
-			Range r;
-			r.ring_i = 31 -ringnum;
-			r.frame_j = ng_cloudOut.points[i].pcaketnum;
-			r.count_num = i;
-			r.range_xy = ng_cloudOut.points[i].z;
-			r.range_zxy = CalculateRangeZXY(ng_cloudOut.points[i]);
-			unordered_map_out.insert(make_pair(image_index, r));
-
-    }
+    Range r;
+    r.ring_i = 31 -ringnum;
+    r.frame_j = ng_cloudOut.points[i].pcaketnum;
+    r.count_num = i;
+    r.range_xy = ng_cloudOut.points[i].z;
+    r.range_zxy = CalculateRangeZXY(ng_cloudOut.points[i]);
+    unordered_map_out.insert(make_pair(image_index, r));
+  }
 }
 
 void pointCloudCallback(const sensor_msgs::PointCloud2::ConstPtr& point_msg)
 {
-    double duration = (ros::Time::now() - time_begin).toSec();
+    time_begin = ros::Time::now();
+    /*double duration = (ros::Time::now() - time_begin).toSec();
     if (duration < 1) {
       return;
     } else {
       time_begin = ros::Time::now();
-    }
+    }*/
+
+    
+
     pcl::fromROSMsg(*point_msg, cloud_msg);
     cloud_msg.header.frame_id = "map";
-
-    transform2RangeImage(cloud_msg, cloud_ng, cloud_g, range_image);
+    
+    cloud_ng.clear(); cloud_g.clear();
+    cloud_nc.clear(); cloud_c.clear();
+    transform2RangeImage(cloud_msg, cloud_ng, cloud_g, cloud_nc, cloud_c, range_image);
 
 
 
@@ -312,12 +430,11 @@ void pointCloudCallback(const sensor_msgs::PointCloud2::ConstPtr& point_msg)
     cv::imshow("map",range_mat); //在这个窗口输出图片。
     cv::waitKey(0); //设置显示时间 */
     
-
+   ROS_INFO("%f ms to process 1 frame pcl",(ros::Time::now() - time_begin).toSec() * 1000);
 }
 
 void depthOdomCallback(const sensor_msgs::ImageConstPtr& img,
                                const geometry_msgs::PoseStampedConstPtr& odom) {
-//cout<<"odom img"<<endl;
   camera_pos_(0) = odom->pose.position.x;
   camera_pos_(1) = odom->pose.position.y;
   camera_pos_(2) = odom->pose.position.z;
@@ -339,11 +456,18 @@ void depthOdomCallback(const sensor_msgs::ImageConstPtr& img,
   cv_ptr->image.copyTo(depth_image_);*/
 }
 
-
-
-
 void visCallback(const ros::TimerEvent& /*event*/) {
-  //publishMapInflate(true);
+  sensor_msgs::PointCloud2 pub_cloud;
+  
+  //publish ground
+  cloud_g.header.frame_id = "map";
+  pcl::toROSMsg(cloud_g, pub_cloud);
+  g_pub.publish(pub_cloud);;
+
+  //publish no_ground
+  cloud_ng.header.frame_id = "map";
+  pcl::toROSMsg(cloud_ng, pub_cloud);
+  ng_pub.publish(pub_cloud);
 }
 
 
@@ -390,7 +514,7 @@ void visCallback(const ros::TimerEvent& /*event*/) {
 
   if (save_pcd && cloud.width > 10) {
     cout<<"saving pcd file"<<endl;
-    pcl::io::savePCDFileASCII ("/home/hitcsc/map_ws/src/grid_path_searcher/src/test_pcd.pcd", cloud); //将点云保存到PCD文件中
+    pcl::io::savePCDFileASCII ("/home/hitcsc/map_ws/src/velodyne_pcl_parser/src/test_pcd.pcd", cloud); //将点云保存到PCD文件中
   }
   // ROS_INFO("pub map");
 }*/
