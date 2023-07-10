@@ -1,6 +1,7 @@
 #include <iostream>
 #include <fstream>
 #include <math.h>
+#include <unordered_map>
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
@@ -14,6 +15,18 @@
 #include <pcl/io/pcd_io.h>
 #include <pcl/io/ply_io.h>
 #include <pcl/io/vtk_lib_io.h>
+#include <pcl/visualization/pcl_visualizer.h>
+#include <pcl/visualization/cloud_viewer.h>
+#include <pcl/common/transforms.h>
+#include <pcl/ModelCoefficients.h>
+#include <pcl/sample_consensus/method_types.h>
+#include <pcl/sample_consensus/model_types.h>
+#include <pcl/segmentation/sac_segmentation.h>
+#include <pcl/filters/passthrough.h>
+#include <pcl/filters/impl/passthrough.hpp>
+#include <pcl/visualization/impl/point_cloud_geometry_handlers.hpp>
+#include <pcl/features/normal_3d.h>
+#include <pcl/filters/extract_indices.h>
 #include <ros/ros.h>
 #include <ros/console.h>
 #include <sensor_msgs/PointCloud2.h>
@@ -52,12 +65,22 @@ using namespace std;
 using namespace Eigen;
 
 // pointcloud segmentation: wall and ground detection
+struct Range {
+	float range_xy;
+	float range_zxy;
+	int ring_i;
+	int frame_j;
+	int count_num;
+};
+
 string frame_id_;
 double height_thresh, range_min, range_max;
 ros::Publisher original_map_pub_, no_floor_pub_, floor_pub_;
 ros::Subscriber odom_sub_, depth_sub_, cloud_sub_;
 ros::Timer vis_timer_;
-pcl::PointCloud<pcl::PointXYZITR> cloud_msg;
+pcl::PointCloud<pcl::PointXYZI> cloud_msg;
+pcl::PointCloud<pcl::PointXYZITR> cloud_ng, cloud_g;
+unordered_map<int, Range> range_image;
 ros::Time time_begin; int idx_begin = 0;
 
 
@@ -112,29 +135,151 @@ int main(int argc, char** argv)
     return 0;
 }
 
+void CloudFilter(const pcl::PointCloud<pcl::PointXYZITR>& cloudIn,
+		pcl::PointCloud<pcl::PointXYZITR>& cloudOut, float x_min, float x_max,
+		float y_min, float y_max, float z_min, float z_max) {
+  //TODO
+  return;
+
+	cloudOut.header = cloudIn.header;
+	//cloudOut.sensor_orientation_ = cloudIn.sensor_orientation_;
+	//cloudOut.sensor_origin_ = cloudIn.sensor_origin_;
+	cloudOut.points.clear();
+	//1) set parameters for removing cloud reflect on ego vehicle
+	float x_limit_min = -1.8, x_limit_max = 1.8, y_limit_forward = 5.0,
+			y_limit_backward = -4.5;
+	//2 apply the filter
+	for (int i = 0; i < cloudIn.size(); ++i) {
+		float x = cloudIn.points[i].x;
+		float y = cloudIn.points[i].y;
+		float z = cloudIn.points[i].z;
+		// whether on ego vehicle
+		if ((x > x_limit_min && x < x_limit_max && y > y_limit_backward
+				&& y < y_limit_forward))
+			continue;
+		if ((x > x_min && x < x_max && y > y_min && y < y_max && z > z_min
+				&& z < z_max)) {
+
+			cloudOut.points.push_back(cloudIn.points[i]);
+		}
+	}
+}
+
+void transform2RangeImage(const pcl::PointCloud<pcl::PointXYZI>& cloudIn,
+		pcl::PointCloud<pcl::PointXYZITR>& ng_cloudOut,
+		  pcl::PointCloud<pcl::PointXYZITR>& g_cloudOut, 
+        unordered_map<int, Range> &unordered_map_out) 
+{
+  int total_frame = (int)(cloudIn.points.size() / 16);
+	pcl::PointCloud<pcl::PointXYZITR>::Ptr cloud2range(new pcl::PointCloud<pcl::PointXYZITR>);
+	pcl::PointCloud<pcl::PointXYZITR>::Ptr cloud_filtered(new pcl::PointCloud<pcl::PointXYZITR>);
+  cloud2range->points.resize(cloudIn.points.size());
+
+	for (int j = 0; j < total_frame; ++j) {
+		int num_odd = 8;                //基数从8位开始排
+		int num_even = 0;                //偶数从头
+
+		for (int i = 0; i < 16; ++i) {
+			if (float(i % 2) == 0.0) {
+				cloud2range->points[j * 16 + i].x = cloudIn.points[j * 16 + i].x ;
+				cloud2range->points[j * 16 + i].y = cloudIn.points[j * 16 + i].y ;
+				cloud2range->points[j * 16 + i].z = cloudIn.points[j * 16 + i].z ;
+        cloud2range->points[j * 16 + i].intensity =cloudIn.points[j * 16 + i].intensity;
+				cloud2range->points[j * 16 + i].ring =num_even;
+				cloud2range->points[j * 16 + i].pcaketnum =j;
+				num_even++;
+			} else {
+				cloud2range->points[j * 16 + i].x = cloudIn.points[j * 16 + i].x;
+				cloud2range->points[j * 16 + i].y = cloudIn.points[j * 16 + i].y ;
+				cloud2range->points[j * 16 + i].z = cloudIn.points[j * 16 + i].z ;
+        cloud2range->points[j * 16 + i].intensity =cloudIn.points[j * 16 + i].intensity;
+				cloud2range->points[j * 16 + i].ring =num_odd;
+				cloud2range->points[j * 16 + i].pcaketnum =j;
+				num_odd++;
+			}
+		} //按索引顺序排列
+  }
+
+	cloud2range->height = 1;
+	cloud2range->width = cloud2range->points.size();
+
+
+	float xmin = -350, xmax = 350, ymin = -300, ymax = 300, zmin = -100, zmax = 300;
+  CloudFilter(*cloud2range, *cloud_filtered, xmin, xmax, ymin, ymax, zmin, zmax);
+
+  GroundRemove2 ground_remove(3, 20, 1.0, 0.15);
+    
+  ground_remove.RemoveGround2(*cloud_filtered, g_cloudOut, ng_cloudOut);
+
+
+	float x_limit_min = -1, x_limit_max = 1, y_limit_forward = 4.0,
+			y_limit_backward = -3;
+
+        for(int i=0; i<ng_cloudOut.points.size(); ++i){
+
+            float x = ng_cloudOut.points[i].x;
+	    float y = ng_cloudOut.points[i].y;
+	    float z = ng_cloudOut.points[i].z;
+       	    float distance = CalculateRangeXY( ng_cloudOut.points[i]);
+            /*if (distance > 30)
+				continue;
+			if ((x > x_limit_min && x < x_limit_max && y > y_limit_backward
+					&& y < y_limit_forward))
+				continue;
+
+			if ((z < -1 || z > 3))
+				continue;*/
+
+
+                        int ringnum = ng_cloudOut.points[i].ring;
+
+			int image_index = ng_cloudOut.points[i].pcaketnum * 16 + (31 - ringnum);
+			Range r;
+			r.ring_i = 31 -ringnum;
+			r.frame_j = ng_cloudOut.points[i].pcaketnum;
+			r.count_num = i;
+			r.range_xy = ng_cloudOut.points[i].z;
+			r.range_zxy = CalculateRangeZXY(ng_cloudOut.points[i]);
+			unordered_map_out.insert(make_pair(image_index, r));
+
+    }
+}
+
 void pointCloudCallback(const sensor_msgs::PointCloud2::ConstPtr& point_msg)
 {
-  double duration = (ros::Time::now() - time_begin).toSec();
-  if (duration < 1) {
-    return;
-  } else {
-    time_begin = ros::Time::now();
-  }
-  //首先将接收到的ROS格式的点云消息sensor_msgs::PointCloud2转化为PCL格式的消息    PointCloud<pcl::PointXYZITR>
+    double duration = (ros::Time::now() - time_begin).toSec();
+    if (duration < 1) {
+      return;
+    } else {
+      time_begin = ros::Time::now();
+    }
     pcl::fromROSMsg(*point_msg, cloud_msg);
     cloud_msg.header.frame_id = "map";
+
+    transform2RangeImage(cloud_msg, cloud_ng, cloud_g, range_image);
+
+
+
+/*
+
+
+
+
+
+
+
  
     //根据雷达型号，创建Mat矩阵，由于在此使用的雷达为128线，每条线上有1281个点，所以创建了一个大小为128*1281尺寸的矩阵，并用0元素初始化。
-    int horizon_num = int(cloud_msg.points.size() / 16);
-    //cv::Mat range_mat = cv::Mat(16, horizon_num, CV_64FC3, cv::Scalar::all(0));
-    cv::Mat range_mat = cv::Mat(16, horizon_num, CV_8UC3, cv::Scalar::all(0));
+    int horizon_num = int(cloud_msg->points.size() / 16);
+    cv::Mat range_mat = cv::Mat(16, horizon_num, CV_64FC3, cv::Scalar::all(0));
+    //cv::Mat range_mat = cv::Mat(16, horizon_num, CV_8UC3, cv::Scalar::all(0));
     double range; //range为该点的深度值
     int row_i, col_i; 
     int scan_num = 16;
     const double PI = 3.1415926;
     int min_idx = 1000000; int max_idx = -1000000;
     //遍历每个点，计算该点对应的Mat矩阵中的索引，并为该索引对应的Mat矩阵元素赋值
-    for(const auto pt : cloud_msg.points)
+    for(const auto pt : cloud_msg->points)
     {
       if (!pcl_isfinite(pt.x) || !pcl_isfinite(pt.y) || !pcl_isfinite(pt.z)) {
         continue;
@@ -155,20 +300,17 @@ void pointCloudCallback(const sensor_msgs::PointCloud2::ConstPtr& point_msg)
           continue;
       if(col_i < 0 || col_i >= horizon_num)
           continue;
-      //range_mat.at<double>(row_i, col_i) = range;
-      //如果想转化为彩色的深度图，可以注释上面这一句，改用下面这一句；
-      range_mat.at<cv::Vec3b>(row_i, col_i) = cv::Vec3d(254-(int)(pt.x *2), 254- (int)(fabs(pt.y) / 0.5), 254-(int)(fabs((pt.z + 1.0f) /0.05)));
+      range_mat.at<double>(row_i, col_i) = range;
     }
     
-    std::string pic_file{"/home/sustech1411/"};
+    /*std::string pic_file{"/home/sustech1411/"};
     std::string pic_name = pic_file + std::to_string(idx_begin) + ".png";
     idx_begin++; 
     bool result = cv::imwrite("/home/sustech1411/a.jpg", range_mat);
-    cout<<result<<endl;
 
     cv::namedWindow("map",CV_WINDOW_NORMAL);//AUTOSIZE //创建一个窗口，用于显示深度图
     cv::imshow("map",range_mat); //在这个窗口输出图片。
-    cv::waitKey(0); //设置显示时间
+    cv::waitKey(0); //设置显示时间 */
     
 
 }

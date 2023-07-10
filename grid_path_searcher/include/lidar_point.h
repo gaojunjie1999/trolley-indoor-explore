@@ -11,6 +11,7 @@ struct PointXYZITR
     PCL_ADD_POINT4D;          
     float intensity;
     uint16_t ring;
+    uint16_t pcaketnum;
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW  
 } EIGEN_ALIGN16;       
 }
@@ -21,6 +22,7 @@ POINT_CLOUD_REGISTER_POINT_STRUCT (PointXYZITR,
                                   (float, z, z)
                                   (float, intensity, intensity)
                                   (uint16_t, ring, ring)
+                                  (uint16_t,pcaketnum,pcaketnum)
                                   )
 
 #endif
