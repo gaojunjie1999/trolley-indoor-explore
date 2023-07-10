@@ -75,12 +75,12 @@ struct Range {
 
 string frame_id_;
 double height_thresh, range_min, range_max;
-ros::Publisher ng_pub, g_pub;
+ros::Publisher ngc_pub, g_pub, c_pub;
 ros::Subscriber odom_sub_, depth_sub_, cloud_sub_;
 ros::Timer vis_timer_;
 //pcl::PointCloud<pcl::PointXYZI> cloud_msg;
 pcl::PointCloud<pcl::PointR> cloud_msg;
-pcl::PointCloud<pcl::PointXYZITR> cloud_ng, cloud_g, cloud_nc, cloud_c;
+pcl::PointCloud<pcl::PointXYZITR> cloud_g, cloud_nc, cloud_c, cloud_ngc;
 unordered_map<int, Range> range_image;
 ros::Time time_begin; 
 int idx_begin = 0;
@@ -213,8 +213,9 @@ int main(int argc, char** argv)
 
     vis_timer_ = nh.createTimer(ros::Duration(0.05), visCallback); 
 
-    ng_pub = nh.advertise<sensor_msgs::PointCloud2>("/trolley/lidar/no_ground", 10);
+    ngc_pub = nh.advertise<sensor_msgs::PointCloud2>("/trolley/lidar/no_ground_ceilling", 10);
     g_pub = nh.advertise<sensor_msgs::PointCloud2>("/trolley/lidar/ground", 10);
+    c_pub = nh.advertise<sensor_msgs::PointCloud2>("/trolley/lidar/ceilling", 10);
 
     nh.param("layout/height_thresh", height_thresh, 0.2);
     nh.param("layout/frame_id", frame_id_, string("world"));
@@ -265,9 +266,8 @@ void CloudFilter(const pcl::PointCloud<pcl::PointXYZITR>& cloudIn,
 }
 
 void transform2RangeImage(const pcl::PointCloud<pcl::PointR>& cloudIn,
-		pcl::PointCloud<pcl::PointXYZITR>& ng_cloudOut, pcl::PointCloud<pcl::PointXYZITR>& g_cloudOut, 
-      pcl::PointCloud<pcl::PointXYZITR>& nc_cloudOut, pcl::PointCloud<pcl::PointXYZITR>& c_cloudOut,
-        unordered_map<int, Range> &unordered_map_out) 
+		pcl::PointCloud<pcl::PointXYZITR>& ngc_cloudOut, pcl::PointCloud<pcl::PointXYZITR>& g_cloudOut, 
+      pcl::PointCloud<pcl::PointXYZITR>& c_cloudOut, unordered_map<int, Range> &unordered_map_out) 
 {
   int total_frame = (int)(cloudIn.points.size() / 16);
 	pcl::PointCloud<pcl::PointXYZITR>::Ptr cloud2range(new pcl::PointCloud<pcl::PointXYZITR>);
@@ -331,28 +331,29 @@ void transform2RangeImage(const pcl::PointCloud<pcl::PointR>& cloudIn,
   CloudFilter(*cloud2range, *cloud_filtered, xmin, xmax, ymin, ymax, zmin, zmax);
 
   //PCA ground & ceilling removal
+  //TODO:better fitting
   ros::Time time1 = ros::Time::now(); 
   GroundRemove2 ground_remove(3, 20, 1.0, 0.15);
-  ground_remove.RemoveGround2(*cloud_filtered, g_cloudOut, ng_cloudOut, c_cloudOut, nc_cloudOut);
-  //ROS_INFO("%f ms to remove ground",(ros::Time::now() - time1).toSec() * 1000);
-  //cout<<" ground pcl size="<<g_cloudOut.points.size()<<" left size="<<ng_cloudOut.points.size()<<endl;
+  ground_remove.RemoveGround2(*cloud_filtered, g_cloudOut, c_cloudOut, ngc_cloudOut);
+  //ROS_INFO("%f ms to remove ground and ceilling",(ros::Time::now() - time1).toSec() * 1000);
+  
 
-  for(int i = 0; i < ng_cloudOut.points.size(); ++i){
+  for(int i = 0; i < ngc_cloudOut.points.size(); ++i){
 
-    float x = ng_cloudOut.points[i].x;
-    float y = ng_cloudOut.points[i].y;
-    float z = ng_cloudOut.points[i].z;
+    float x = ngc_cloudOut.points[i].x;
+    float y = ngc_cloudOut.points[i].y;
+    float z = ngc_cloudOut.points[i].z;
 
-    float distance = CalculateRangeXY( ng_cloudOut.points[i]);
-    int ringnum = ng_cloudOut.points[i].ring;
-    int image_index = ng_cloudOut.points[i].pcaketnum * 16 + (16 - ringnum);
+    float distance = CalculateRangeXY( ngc_cloudOut.points[i]);
+    int ringnum = ngc_cloudOut.points[i].ring;
+    int image_index = ngc_cloudOut.points[i].pcaketnum * 16 + (16 - ringnum);
 
     Range r;
     r.ring_i = 31 -ringnum;
-    r.frame_j = ng_cloudOut.points[i].pcaketnum;
+    r.frame_j = ngc_cloudOut.points[i].pcaketnum;
     r.count_num = i;
-    r.range_xy = ng_cloudOut.points[i].z;
-    r.range_zxy = CalculateRangeZXY(ng_cloudOut.points[i]);
+    r.range_xy = ngc_cloudOut.points[i].z;
+    r.range_zxy = CalculateRangeZXY(ngc_cloudOut.points[i]);
     unordered_map_out.insert(make_pair(image_index, r));
   }
 }
@@ -372,10 +373,12 @@ void pointCloudCallback(const sensor_msgs::PointCloud2::ConstPtr& point_msg)
     pcl::fromROSMsg(*point_msg, cloud_msg);
     cloud_msg.header.frame_id = "map";
     
-    cloud_ng.clear(); cloud_g.clear();
-    cloud_nc.clear(); cloud_c.clear();
-    transform2RangeImage(cloud_msg, cloud_ng, cloud_g, cloud_nc, cloud_c, range_image);
-
+    cloud_ngc.clear(); 
+    cloud_g.clear();
+    cloud_c.clear();
+    transform2RangeImage(cloud_msg, cloud_ngc, cloud_g, cloud_c, range_image);
+    cout<<"total="<<cloud_msg.points.size()<<" ground pcl size="<<cloud_g.points.size()
+      <<" ceilling pcl size="<<cloud_c.points.size()<<" left size="<<cloud_ngc.points.size()<<endl;
 
 
 /*
@@ -462,12 +465,17 @@ void visCallback(const ros::TimerEvent& /*event*/) {
   //publish ground
   cloud_g.header.frame_id = "map";
   pcl::toROSMsg(cloud_g, pub_cloud);
-  g_pub.publish(pub_cloud);;
+  g_pub.publish(pub_cloud);
+
+  //publish ceilling
+  cloud_c.header.frame_id = "map";
+  pcl::toROSMsg(cloud_c, pub_cloud);
+  c_pub.publish(pub_cloud);
 
   //publish no_ground
-  cloud_ng.header.frame_id = "map";
-  pcl::toROSMsg(cloud_ng, pub_cloud);
-  ng_pub.publish(pub_cloud);
+  cloud_ngc.header.frame_id = "map";
+  pcl::toROSMsg(cloud_ngc, pub_cloud);
+  ngc_pub.publish(pub_cloud);
 }
 
 

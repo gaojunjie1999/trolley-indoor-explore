@@ -22,9 +22,9 @@ SOFTWARE.*/
 
 #include "ground_remove2.h"
 
-MatrixXf normal_2(3, 1);
+MatrixXf normal_2(3, 1), normal_2c(3, 1);
 vector<float> normal2(3);
-float th_dist_d_2;
+float th_dist_d_2, th_dist_d_2c;
 
 static int64_t gtm() {
 	struct timeval tm;
@@ -34,8 +34,12 @@ static int64_t gtm() {
 	return re;
 }
 
-bool point_cmp(pcl::PointXYZITR a, pcl::PointXYZITR b) {
+inline bool point_cmp(pcl::PointXYZITR a, pcl::PointXYZITR b) {
 	return a.z < b.z;
+}
+
+inline bool point_cmpc(pcl::PointXYZITR a, pcl::PointXYZITR b) {
+	return a.z > b.z;
 }
 
 GroundRemove2::GroundRemove2(int num_iter, int num_lpr, double th_seeds,
@@ -54,6 +58,8 @@ void GroundRemove2::extract_initial_seeds_2(
 	int cnt = 0;
 	// Calculate the mean height value.
 	for (int i = 0; i < p_sorted.points.size() && cnt < num_lpr_; ++i) {
+		//ROS_WARN("small to big");
+		//cout<<p_sorted.points[i].z<<endl;
 		sum += p_sorted.points[i].z;
 		cnt++;
 	}
@@ -68,8 +74,36 @@ void GroundRemove2::extract_initial_seeds_2(
 	// return seeds points
 }
 
+void GroundRemove2::extract_initial_seeds_2c(
+		const pcl::PointCloud<pcl::PointXYZITR>& p_sorted,
+		pcl::PointCloud<pcl::PointXYZITR>& g_seeds_pc) {
+	// LPR is the mean of low point representative
+	double sum = 0;
+	int cnt = 0;
+	// Calculate the mean height value.
+	//for (int i = 0; i < p_sorted.points.size() && (cnt < num_lpr_ || p_sorted.points[i].z > 1.0); ++i) {
+	for (int i = 0; i < p_sorted.points.size() && (cnt < 5 * num_lpr_ || p_sorted.points[i].z > 1.0); ++i) {
+		if (p_sorted.points[i].z < 1.0)
+			continue;
+		//ROS_WARN("big to small");
+		//cout<<p_sorted.points[i].z<<endl;
+		sum += p_sorted.points[i].z;
+		cnt++;
+	}
+	double lpr_height = cnt != 0 ? sum / cnt : 0; // in case divide by 0
+	g_seeds_pc.clear();
+	// iterate pointcloud, filter those height is less than lpr.height+th_seeds_
+	for (int i = 0; i < p_sorted.points.size(); ++i) {
+		if (p_sorted.points[i].z > lpr_height) {
+			//cout<<p_sorted.points[i].z<<endl;
+			g_seeds_pc.points.push_back(p_sorted.points[i]);
+		}
+	}
+	// return seeds points
+}
+
 void GroundRemove2::estimate_plane_2(
-		const pcl::PointCloud<pcl::PointXYZITR>& g_ground_pc) {
+		const pcl::PointCloud<pcl::PointXYZITR>& g_ground_pc, bool is_ground) {
 	// Create covarian matrix in single pass.
 	// TODO: compare the efficiency.
 	Eigen::Matrix3f cov;
@@ -78,77 +112,91 @@ void GroundRemove2::estimate_plane_2(
 
 	pcl::computeMeanAndCovarianceMatrix(g_ground_pc, cov, pc_mean);
 
-	//computeMeanAndCovarianceMatrix(g_ground_pc, conv, mean);
-
-	//static float A[9] = { conv[0], conv[1], conv[2],  conv[3],
-	//conv[4], conv[5],  conv[6], conv[7], conv[8],};
-	//static Eigen::MatrixXf conv2 = Eigen::Map<Eigen::Matrix<float, 3, 3, Eigen::RowMajor> >(A);
 	// Singular Value Decomposition: SVD
 	JacobiSVD<MatrixXf> svd(cov, Eigen::DecompositionOptions::ComputeFullU);
 	// use the least singular vector as normal
-	normal_2 = (svd.matrixU().col(2));
-	// mean ground seeds value
-	//Eigen::Vector3f seeds_mean = pc_mean.head<3>();
-
-	// according to normal.T*[x,y,z] = -d
-	//float d_ = -(normal_.transpose()*seeds_mean)(0,0);
-
-	float d_ = -(normal_2(0, 0) * pc_mean(0) + normal_2(1, 0) * pc_mean(1)
-			+ normal_2(2, 0) * pc_mean(2));
-
-	// set distance threhold to `th_dist - d`
-	th_dist_d_2 = th_dist_ - d_;
+	if (is_ground) {
+		normal_2 = (svd. matrixU().col(2));
+		float d_ = -(normal_2(0, 0) * pc_mean(0) + normal_2(1, 0) * pc_mean(1)
+				+ normal_2(2, 0) * pc_mean(2));
+//cout<<"d1="<<d_<<"   "<<th_dist_ - d_<<endl;
+		// set distance threhold to `th_dist - d`
+		th_dist_d_2 = th_dist_ - d_;
+	} else {
+		normal_2c = (svd. matrixU().col(2));
+		float dc_ = -(normal_2(0, 0) * pc_mean(0) + normal_2(1, 0) * pc_mean(1)
+				+ normal_2(2, 0) * pc_mean(2));
+//cout<<"d2="<<dc_<<"   "<<th_dist_ - dc_<<endl;
+		// set distance threhold to `th_dist - d`
+		th_dist_d_2c = -1 * th_dist_ - dc_;
+	}
 
 	// return the equation parameters
 }
 
 void GroundRemove2::RemoveGround_Thread2(pcl::PointCloud<pcl::PointXYZITR>& cloudIn,
 		pcl::PointCloud<pcl::PointXYZITR>& cloudgc,
+		pcl::PointCloud<pcl::PointXYZITR>& cloudcc,
 		pcl::PointCloud<pcl::PointXYZITR>& cloudngc,
 		pcl::PointCloud<pcl::PointXYZITR>& g_ground_pc1,
+		pcl::PointCloud<pcl::PointXYZITR>& g_ground_cc1,
 		pcl::PointCloud<pcl::PointXYZITR>& g_not_ground_pc1) {
 
 	std::lock_guard < std::mutex > lock(regionmutex);
-	pcl::PointCloud<pcl::PointXYZITR>::Ptr g_seeds_pc(
-			new pcl::PointCloud<pcl::PointXYZITR>());
+	pcl::PointCloud<pcl::PointXYZITR>::Ptr g_seeds_pc(new pcl::PointCloud<pcl::PointXYZITR>());
+	pcl::PointCloud<pcl::PointXYZITR>::Ptr c_seeds_pc(new pcl::PointCloud<pcl::PointXYZITR>());
 
+	//g extraction
 	sort(cloudIn.points.begin(), cloudIn.points.end(), point_cmp);
-
 	extract_initial_seeds_2(cloudIn, *g_seeds_pc);
-
 	cloudgc = *g_seeds_pc;
+	//cout<<"size1="<<cloudgc.points.size()<<endl;
+	//c extraction
+	sort(cloudIn.points.begin(), cloudIn.points.end(), point_cmpc);
+	extract_initial_seeds_2c(cloudIn, *c_seeds_pc);
+	cloudcc = *c_seeds_pc;
+	//cout<<"size2="<<cloudcc.points.size()<<endl;
 
 	for (int i = 0; i < num_iter_; ++i) {
 
-		estimate_plane_2(cloudgc);
+		estimate_plane_2(cloudgc, true);
+		estimate_plane_2(cloudcc, false);
 
 		cloudgc.clear();
+		cloudcc.clear();
 		cloudngc.clear();
 
 		float xd = normal_2(0, 0);
 		float yd = normal_2(1, 0);
 		float zd = normal_2(2, 0);
+		float xdc = normal_2c(0, 0);
+		float ydc = normal_2c(1, 0);
+		float zdc = normal_2c(2, 0);
+
 		for (auto p : cloudIn.points) {
 			float distance = p.x * xd + p.y * yd + p.z * zd;
+			float distance_c = p.x * xdc + p.y * ydc + p.z * zdc;
+
 			if (distance < th_dist_d_2) {
 				//g_all_pc->points[r].label = 1u;// means ground
 				cloudgc.points.push_back(p);
+			} else if (distance_c > th_dist_d_2c) {
+				//g_all_pc->points[r].label = 1u;// means ground
+				cloudcc.points.push_back(p);
 			} else {
 				//g_all_pc->points[r].label = 0u;// means not ground and non clusterred
 				cloudngc.points.push_back(p);
 			}
-
 		}
-
 	}
 
 	for (int k = 0; k < cloudgc.points.size(); ++k) {
-
 		g_ground_pc1.points.push_back(cloudgc.points[k]);
 	}
-
+	for (int k = 0; k < cloudcc.points.size(); ++k) {
+		g_ground_cc1.points.push_back(cloudcc.points[k]);
+	}
 	for (int k = 0; k < cloudngc.points.size(); ++k) {
-
 		g_not_ground_pc1.points.push_back(cloudngc.points[k]);
 	}
 
@@ -156,9 +204,8 @@ void GroundRemove2::RemoveGround_Thread2(pcl::PointCloud<pcl::PointXYZITR>& clou
 
 void GroundRemove2::RemoveGround2(pcl::PointCloud<pcl::PointXYZITR>& cloudIn,
 			pcl::PointCloud<pcl::PointXYZITR>& g_ground_pc,
-			pcl::PointCloud<pcl::PointXYZITR>& g_not_ground_pc,
 			pcl::PointCloud<pcl::PointXYZITR>& ceilling_pc,
-			pcl::PointCloud<pcl::PointXYZITR>& no_ceilling_pc) {
+			pcl::PointCloud<pcl::PointXYZITR>& g_not_ground_pc) {
 	pcl::PointCloud<pcl::PointXYZITR>::Ptr g_seeds_region1(
 			new pcl::PointCloud<pcl::PointXYZITR>());
 	pcl::PointCloud<pcl::PointXYZITR>::Ptr g_seeds_region2(
@@ -167,14 +214,15 @@ void GroundRemove2::RemoveGround2(pcl::PointCloud<pcl::PointXYZITR>& cloudIn,
 			new pcl::PointCloud<pcl::PointXYZITR>());
 	pcl::PointCloud<pcl::PointXYZITR>::Ptr g_ground_pc1(
 			new pcl::PointCloud<pcl::PointXYZITR>());
+	pcl::PointCloud<pcl::PointXYZITR>::Ptr ceilling_pc1(
+			new pcl::PointCloud<pcl::PointXYZITR>());
 	pcl::PointCloud<pcl::PointXYZITR>::Ptr g_not_ground_pc1(
 			new pcl::PointCloud<pcl::PointXYZITR>());
 
 	float xmin = -35, xmax = 35, ymin = -30, ymax = 30, zmin = -2.0, zmax = 2.0;
 	float regionsize = (ymax - ymin) / 3;
 	for (int i = 0; i < cloudIn.points.size(); ++i) {
-		if (cloudIn.points[i].z < 0.75) {
-
+		if (cloudIn.points[i].z < 0.75 || cloudIn.points[i].z > 1.2) {
 			if (cloudIn.points[i].y < ymax - 0 * regionsize
 					&& cloudIn.points[i].y > ymax - 1 * regionsize) {
 				g_seeds_region1->points.push_back(cloudIn.points[i]);
@@ -206,9 +254,8 @@ void GroundRemove2::RemoveGround2(pcl::PointCloud<pcl::PointXYZITR>& cloudIn,
 	for (int ri = 0; ri < num_seg_; ++ri) {
 
 		thread_vec[ri] = std::thread(&GroundRemove2::RemoveGround_Thread2, this,
-				std::ref(*pcregion[ri]), std::ref(*g_ground_pc1),
-				std::ref(*g_not_ground_pc1), std::ref(g_ground_pc),
-				std::ref(g_not_ground_pc));
+				std::ref(*pcregion[ri]), std::ref(*g_ground_pc1), std::ref(*ceilling_pc1), std::ref(*g_not_ground_pc1), 
+				std::ref(g_ground_pc), std::ref(ceilling_pc), std::ref(g_not_ground_pc));
 
 	}
 

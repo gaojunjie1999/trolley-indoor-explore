@@ -33,6 +33,8 @@ SOFTWARE.*/
 #include <time.h> 
 #include <thread>
 #include <mutex>  
+#include <ros/ros.h>
+#include <ros/console.h>
 //PCL
 #include <pcl/common/transforms.h>
 #include <pcl/ModelCoefficients.h>
@@ -110,17 +112,20 @@ public:
 	GroundRemove2(int num_iter, int num_lpr, double th_seeds, double th_dist);
 	void extract_initial_seeds_2(const pcl::PointCloud<pcl::PointXYZITR>& p_sorted,
 			pcl::PointCloud<pcl::PointXYZITR>& g_seeds_pc);
-	void estimate_plane_2(const pcl::PointCloud<pcl::PointXYZITR>& g_ground_pc);
+	void extract_initial_seeds_2c(const pcl::PointCloud<pcl::PointXYZITR>& p_sorted,
+			pcl::PointCloud<pcl::PointXYZITR>& g_seeds_pc);
+	void estimate_plane_2(const pcl::PointCloud<pcl::PointXYZITR>& g_ground_pc, bool is_ground);
 	void RemoveGround_Thread2(pcl::PointCloud<pcl::PointXYZITR>& cloudIn,
-			pcl::PointCloud<pcl::PointXYZITR>& cloudgc,
-			pcl::PointCloud<pcl::PointXYZITR>& cloudngc,
-			pcl::PointCloud<pcl::PointXYZITR>& g_ground_pc1,
-			pcl::PointCloud<pcl::PointXYZITR>& g_not_ground_pc1);
+		pcl::PointCloud<pcl::PointXYZITR>& cloudgc,
+		pcl::PointCloud<pcl::PointXYZITR>& cloudcc,
+		pcl::PointCloud<pcl::PointXYZITR>& cloudngc,
+		pcl::PointCloud<pcl::PointXYZITR>& g_ground_pc1,
+		pcl::PointCloud<pcl::PointXYZITR>& g_ground_cc1,
+		pcl::PointCloud<pcl::PointXYZITR>& g_not_ground_pc1);
 	void RemoveGround2(pcl::PointCloud<pcl::PointXYZITR>& cloudIn,
 			pcl::PointCloud<pcl::PointXYZITR>& g_ground_pc,
-			pcl::PointCloud<pcl::PointXYZITR>& g_not_ground_pc,
 			pcl::PointCloud<pcl::PointXYZITR>& ceilling_pc,
-			pcl::PointCloud<pcl::PointXYZITR>& no_ceilling_pc);
+			pcl::PointCloud<pcl::PointXYZITR>& g_not_ground_pc);
 
 private:
 	mutex regionmutex;
