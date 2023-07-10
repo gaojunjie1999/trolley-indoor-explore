@@ -29,6 +29,7 @@
 #include <opencv2/core/eigen.hpp>
 #include <opencv2/opencv.hpp>
 #include <opencv2/highgui/highgui.hpp>
+#include <opencv2/highgui/highgui_c.h>
 #include <random>
 #include <tuple>
 #include <message_filters/subscriber.h>
@@ -57,7 +58,8 @@ ros::Publisher original_map_pub_, no_floor_pub_, floor_pub_;
 ros::Subscriber odom_sub_, depth_sub_, cloud_sub_;
 ros::Timer vis_timer_;
 pcl::PointCloud<pcl::PointXYZITR> cloud_msg;
-//pcl::PointCloud<pcl::PointXYZI> cloud_msg;
+ros::Time time_begin; int idx_begin = 0;
+
 
 // camera position and pose data
 Eigen::Vector3d camera_pos_, last_camera_pos_;
@@ -78,6 +80,7 @@ int main(int argc, char** argv)
 {
     ros::init(argc, argv, "demo_node");
     ros::NodeHandle nh("~");
+    time_begin = ros::Time::now();
 
     message_filters::Subscriber<sensor_msgs::Image> depth_sub_(nh, "/camera/depth/image_rect_raw", 50);
     cloud_sub_ = nh.subscribe<sensor_msgs::PointCloud2>("/velodyne_points", 100, pointCloudCallback);
@@ -95,7 +98,7 @@ int main(int argc, char** argv)
     nh.param("layout/height_thresh", height_thresh, 0.2);
     nh.param("layout/frame_id", frame_id_, string("world"));
     nh.param("layout/range_min", range_min, 0.1);
-    nh.param("layout/range_max", range_max, 20.0);
+    nh.param("layout/range_max", range_max, 200.0);
 
     ros::Rate rate(100);
     bool status = ros::ok();
@@ -111,12 +114,19 @@ int main(int argc, char** argv)
 
 void pointCloudCallback(const sensor_msgs::PointCloud2::ConstPtr& point_msg)
 {
+  double duration = (ros::Time::now() - time_begin).toSec();
+  if (duration < 1) {
+    return;
+  } else {
+    time_begin = ros::Time::now();
+  }
   //首先将接收到的ROS格式的点云消息sensor_msgs::PointCloud2转化为PCL格式的消息    PointCloud<pcl::PointXYZITR>
     pcl::fromROSMsg(*point_msg, cloud_msg);
     cloud_msg.header.frame_id = "map";
  
     //根据雷达型号，创建Mat矩阵，由于在此使用的雷达为128线，每条线上有1281个点，所以创建了一个大小为128*1281尺寸的矩阵，并用0元素初始化。
     int horizon_num = int(cloud_msg.points.size() / 16);
+    //cv::Mat range_mat = cv::Mat(16, horizon_num, CV_64FC3, cv::Scalar::all(0));
     cv::Mat range_mat = cv::Mat(16, horizon_num, CV_8UC3, cv::Scalar::all(0));
     double range; //range为该点的深度值
     int row_i, col_i; 
@@ -138,22 +148,29 @@ void pointCloudCallback(const sensor_msgs::PointCloud2::ConstPtr& point_msg)
       row_i = pt.ring;
       double h_angle = 180 / PI * std::atan2(pt.y, pt.x) + 180;
       col_i = ceil(h_angle / 360 * horizon_num) - 1;  
-      cout<<"pointxyz: "<<pt.x<<" "<<pt.y<<" "<<pt.z<<" row="<<row_i<<" col="<<col_i<<endl; 
+      cout<<"pointxyz: "<<pt.x<<" "<<pt.y<<" "<<pt.z<<" row="<<row_i<<" col="<<col_i<<" range="<<range<<endl; 
      
       //忽略索引不合法的点
       if(row_i < 0 || row_i >= scan_num)
           continue;
       if(col_i < 0 || col_i >= horizon_num)
           continue;
-      cout<<"16*"<<horizon_num<<endl;
-      range_mat.at<double>(row_i, col_i) = range;
+      //range_mat.at<double>(row_i, col_i) = range;
       //如果想转化为彩色的深度图，可以注释上面这一句，改用下面这一句；
-      //range_mat.at<cv::Vec3b>(row_i, col_i) = cv::Vec3b(254-int(pt.x *2), 254- int(fabs(pt.y) / 0.5), 254-int(fabs((pt.z + 1.0f) /0.05)));
+      range_mat.at<cv::Vec3b>(row_i, col_i) = cv::Vec3d(254-(int)(pt.x *2), 254- (int)(fabs(pt.y) / 0.5), 254-(int)(fabs((pt.z + 1.0f) /0.05)));
     }
     
-    //cv::namedWindow("map",CV_WINDOW_NORMAL);//AUTOSIZE //创建一个窗口，用于显示深度图
-    //cv::imshow("map",range_mat); //在这个窗口输出图片。
-    //cv::waitKey(10); //设置显示时间
+    std::string pic_file{"/home/sustech1411/"};
+    std::string pic_name = pic_file + std::to_string(idx_begin) + ".png";
+    idx_begin++; 
+    bool result = cv::imwrite("/home/sustech1411/a.jpg", range_mat);
+    cout<<result<<endl;
+
+    cv::namedWindow("map",CV_WINDOW_NORMAL);//AUTOSIZE //创建一个窗口，用于显示深度图
+    cv::imshow("map",range_mat); //在这个窗口输出图片。
+    cv::waitKey(0); //设置显示时间
+    
+
 }
 
 void depthOdomCallback(const sensor_msgs::ImageConstPtr& img,
