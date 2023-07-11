@@ -64,11 +64,11 @@ typedef message_filters::Synchronizer<SyncPolicyImageOdom>* SynchronizerImageOdo
 
 using namespace std;
 using namespace Eigen;
-const float PI = 3.1415926;
+const double PI = 3.1415926;
 // pointcloud segmentation: wall and ground detection
 struct Range {
-	float range_xy;
-	float range_zxy;
+	double range_xy;
+	double range_zxy;
 	int ring_i;
 	int frame_j;
 	int count_num;
@@ -87,7 +87,8 @@ ros::Time time_begin;
 int idx_begin = 0;
 int total_frame = 0;
 vector<int> cluster_index;
-
+bool have_pcl = false;
+boost::shared_ptr<pcl::visualization::PCLVisualizer> viewer(new pcl::visualization::PCLVisualizer("pcd")); //PCLVisualizer 可视化类
 
 // camera position and pose data
 Eigen::Vector3d camera_pos_, last_camera_pos_;
@@ -105,21 +106,21 @@ void depthOdomCallback(const sensor_msgs::ImageConstPtr& img,
 void visCallback(const ros::TimerEvent& /*event*/);
                                 
 
-float Polar_angle_cal(float x, float y) {
-	float temp_tangle = 0;
+double Polar_angle_cal(double x, double y) {
+	double temp_tangle = 0;
 	if (x == 0 && y == 0) {
 		temp_tangle = 0;
 	} else if (y >= 0) {
-		temp_tangle = (float) atan2(y, x);
+		temp_tangle = (double) atan2(y, x);
 	} else if (y <= 0) {
-		temp_tangle = (float) atan2(y, x) + 2 * PI;
+		temp_tangle = (double) atan2(y, x) + 2 * PI;
 	}
 	return temp_tangle;
 }
 //HSV转rgb
-vector<float> hsv2rgb(vector<float>& hsv) {
-	vector<float> rgb(3);
-	float R, G, B, H, S, V;
+vector<double> hsv2rgb(vector<double>& hsv) {
+	vector<double> rgb(3);
+	double R, G, B, H, S, V;
 	H = hsv[0];
 	S = hsv[1];
 	V = hsv[2];
@@ -128,10 +129,10 @@ vector<float> hsv2rgb(vector<float>& hsv) {
 	} else {
 
 		int i = int(H * 6);
-		float f = (H * 6) - i;
-		float a = V * (1 - S);
-		float b = V * (1 - S * f);
-		float c = V * (1 - S * (1 - f));
+		double f = (H * 6) - i;
+		double a = V * (1 - S);
+		double b = V * (1 - S * f);
+		double c = V * (1 - S * (1 - f));
 		i = i % 6;
 		switch (i) {
 		case 0: {
@@ -187,13 +188,13 @@ template<typename T> string toString(const T& t) {
 
 
 template<typename PointInT>
-float CalculateRangeXY(const PointInT pointIn) {
+double CalculateRangeXY(const PointInT pointIn) {
 
 	return sqrt(pointIn.x * pointIn.x + pointIn.y * pointIn.y);
 }
 
 template<typename PointInT>
-float CalculateRangeZXY(const PointInT pointIn) {
+double CalculateRangeZXY(const PointInT pointIn) {
 
 	return sqrt(
 			pointIn.x * pointIn.x + pointIn.y * pointIn.y
@@ -225,21 +226,31 @@ int main(int argc, char** argv)
     nh.param("layout/range_min", range_min, 0.1);
     nh.param("layout/range_max", range_max, 200.0);
 
+	
+	viewer->setBackgroundColor(0.8, 0.8, 0.8);
+	viewer->addCoordinateSystem(1);
+
     ros::Rate rate(100);
     bool status = ros::ok();
+
+
+
     while (status)
     {    
         ros::spinOnce();
         status = ros::ok();
         rate.sleep();
+
+		if (!viewer->wasStopped())
+			viewer->spinOnce();;
     }
 
     return 0;
 }
 
 void CloudFilter(const pcl::PointCloud<pcl::PointXYZITR>& cloudIn,
-		pcl::PointCloud<pcl::PointXYZITR>& cloudOut, float x_min, float x_max,
-		float y_min, float y_max, float z_min, float z_max) {
+		pcl::PointCloud<pcl::PointXYZITR>& cloudOut, double x_min, double x_max,
+		double y_min, double y_max, double z_min, double z_max) {
   //TODO
   cloudOut = cloudIn;
   return;
@@ -249,13 +260,13 @@ void CloudFilter(const pcl::PointCloud<pcl::PointXYZITR>& cloudIn,
 	//cloudOut.sensor_origin_ = cloudIn.sensor_origin_;
 	cloudOut.points.clear();
 	//1) set parameters for removing cloud reflect on ego vehicle
-	float x_limit_min = -1.8, x_limit_max = 1.8, y_limit_forward = 5.0,
+	double x_limit_min = -1.8, x_limit_max = 1.8, y_limit_forward = 5.0,
 			y_limit_backward = -4.5;
 	//2 apply the filter
 	for (int i = 0; i < cloudIn.size(); ++i) {
-		float x = cloudIn.points[i].x;
-		float y = cloudIn.points[i].y;
-		float z = cloudIn.points[i].z;
+		double x = cloudIn.points[i].x;
+		double y = cloudIn.points[i].y;
+		double z = cloudIn.points[i].z;
 		// whether on ego vehicle
 		if ((x > x_limit_min && x < x_limit_max && y > y_limit_backward
 				&& y < y_limit_forward))
@@ -306,7 +317,7 @@ void transform2RangeImage(const pcl::PointCloud<pcl::PointR>& cloudIn,
 		int num_odd = 8;                //基数从8位开始排
 		int num_even = 0;                //偶数从头
 		for (int i = 0; i < 16; ++i) {
-			if (float(i % 2) == 0.0) {
+			if (double(i % 2) == 0.0) {
 				cloud2range->points[j * 16 + i].x = cloudIn.points[j * 16 + i].x ;
 				cloud2range->points[j * 16 + i].y = cloudIn.points[j * 16 + i].y ;
 				cloud2range->points[j * 16 + i].z = cloudIn.points[j * 16 + i].z ;
@@ -330,7 +341,7 @@ void transform2RangeImage(const pcl::PointCloud<pcl::PointR>& cloudIn,
 	cloud2range->width = cloud2range->points.size();
 
 
-	float xmin = -350, xmax = 350, ymin = -300, ymax = 300, zmin = -100, zmax = 300;
+	double xmin = -350, xmax = 350, ymin = -300, ymax = 300, zmin = -100, zmax = 300;
   CloudFilter(*cloud2range, *cloud_filtered, xmin, xmax, ymin, ymax, zmin, zmax);
 
   //PCA ground & ceilling removal
@@ -343,11 +354,11 @@ void transform2RangeImage(const pcl::PointCloud<pcl::PointR>& cloudIn,
 
   for(int i = 0; i < ngc_cloudOut.points.size(); ++i){
 
-    float x = ngc_cloudOut.points[i].x;
-    float y = ngc_cloudOut.points[i].y;
-    float z = ngc_cloudOut.points[i].z;
+    double x = ngc_cloudOut.points[i].x;
+    double y = ngc_cloudOut.points[i].y;
+    double z = ngc_cloudOut.points[i].z;
 
-    float distance = CalculateRangeXY( ngc_cloudOut.points[i]);
+    double distance = CalculateRangeXY( ngc_cloudOut.points[i]);
     int ringnum = ngc_cloudOut.points[i].ring;
     int image_index = ngc_cloudOut.points[i].pcaketnum * 16 + (15 - ringnum);
 
@@ -389,24 +400,24 @@ void find_neighbors(int Ix, int Iy, vector<int>& neighborudindex,
 		//cout<<Ix << " "<<y<<endl;
 		neighborudindex.push_back((Ix * 16 + y)); 
 	}
+	have_pcl = true;
 }
 
 bool compare_index(pair<int, Range> a, pair<int, Range> b) {
 	return a.first < b.first;
 } //升序
 
-vector<int> range_cluster(unordered_map<int, Range> &unordered_map_in, double ringnum) {
-
+void range_cluster(unordered_map<int, Range> &unordered_map_in, double ringnum, vector<int>& cluster_vec) {
 	int current_cluster = 0;
 	vector<int> cluster_indices = vector<int>(total_frame * 16, -1);
-	float horizon_angle_resolution = 360 / total_frame * PI / 180;
-	float vertical_angle_resolution = 2.0 * PI / 180;
+	double horizon_angle_resolution = 360.0 / double(total_frame) * PI / 180;
+	double vertical_angle_resolution = 2.0 * PI / 180.0;
 
   vector<pair<int, Range>> tr(unordered_map_in.begin(), unordered_map_in.end());
   sort(tr.begin(), tr.end(), compare_index);
 
-	float theta_thresh = 8 * PI / 180;
-	float theta_thresh2 =30 * PI / 180;
+	double theta_thresh = 3 * PI / 180;
+	double theta_thresh2 = 30 * PI / 180;
 
 	for (int i = 0; i < tr.size(); ++i) {
 			unordered_map<int, Range>::iterator it_find;
@@ -436,21 +447,23 @@ vector<int> range_cluster(unordered_map<int, Range> &unordered_map_in, double ri
 							unordered_map<int, Range>::iterator it_findn;
 							it_findn = unordered_map_in.find(neighborudid[in]);
 							if (it_findn != unordered_map_in.end()) {
-								float d1 = max(it_findo->second.range_zxy,
+								double d1 = max(it_findo->second.range_zxy,
 										it_findn->second.range_zxy);
-								float d2 = min(it_findo->second.range_zxy,
+								double d2 = min(it_findo->second.range_zxy,
 										it_findn->second.range_zxy);
 
 
-								float angle = fabs((float) atan2(d2* sin(vertical_angle_resolution),d1- d2* cos(vertical_angle_resolution)));
-                float dmax = (it_findo->second.range_zxy) * sin(1.33*PI/180)/sin(50*PI/180 -1.33*PI/180) + 3*0.2;
-							  /*if (it_findo->second.range_xy>1.2 && fabs(d2-d1) < dmax) {
+								double angle = fabs((double) atan2(d2* sin(vertical_angle_resolution),d1- d2* cos(vertical_angle_resolution)));
+                double dmax = (it_findo->second.range_zxy) * sin(1.33*PI/180)/sin(50*PI/180 -1.33*PI/180) + 3*0.2;
+				//cout<<"angle1="<<angle * 180 / PI<<" deltad="<<fabs(d2-d1)<<" dmax1="<<dmax<<endl;
+
+							  if (it_findo->second.range_xy>1.2 && fabs(d2-d1) < dmax) {
 									vector<int> indexxy(2);
 									indexxy[0] = it_findn->second.frame_j;
 									indexxy[1] = it_findn->second.ring_i;
 									q.push(indexxy);
-								}else if (angle > theta_thresh2) {*/
-                if (angle > theta_thresh2) {
+								}else if (angle > theta_thresh2) {
+                //if (angle > theta_thresh2) {
 									vector<int> indexxy(2);
 									indexxy[0] = it_findn->second.frame_j;
 									indexxy[1] = it_findn->second.ring_i;
@@ -465,13 +478,17 @@ vector<int> range_cluster(unordered_map<int, Range> &unordered_map_in, double ri
 							unordered_map<int, Range>::iterator it_findn;
 							it_findn = unordered_map_in.find(neighborlfid[in]);
 							if (it_findn != unordered_map_in.end()) {
-								float d1 = max(it_findo->second.range_zxy,
+								double d1 = max(it_findo->second.range_zxy,
 										it_findn->second.range_zxy);
-								float d2 = min(it_findo->second.range_zxy,
+								double d2 = min(it_findo->second.range_zxy,
 										it_findn->second.range_zxy);
 
-								float angle = fabs((float) atan2(d2* sin(horizon_angle_resolution),d1- d2* cos(horizon_angle_resolution)));
-                                                                float dmax = (it_findo->second.range_zxy) * sin(360/ringnum*PI/180)/sin(30*PI/180 -360/ringnum*PI/180) + 3*0.2;
+								double angle = fabs((double) atan2(d2* sin(horizon_angle_resolution),d1- d2* cos(horizon_angle_resolution)));
+                                double dmax = (it_findo->second.range_zxy) * sin(360/ringnum*PI/180)/sin(30*PI/180 -360/ringnum*PI/180) + 3*0.2;
+								//cout<<"angle2="<<angle * 180 / PI<<" deltad="<<fabs(d2-d1)<<" dmax2="<<dmax<<endl;
+								//cout<<"d1="<<d1<<" d2="<<d2<<" horizon_angle_resolution="<<horizon_angle_resolution / PI * 180<<" total_frame="<<total_frame<<endl;
+
+
 							        //if (fabs(it_findo->second.range_zxy-it_findn->second.range_zxy) < dmax) {
 								if (angle > theta_thresh) {
 									//cluster_indices[neighborlfid[in]] =
@@ -491,8 +508,7 @@ vector<int> range_cluster(unordered_map<int, Range> &unordered_map_in, double ri
 			}
 
 	}
-
-	return cluster_indices;
+	cluster_vec = cluster_indices;
 }
 
 void pointCloudCallback(const sensor_msgs::PointCloud2::ConstPtr& point_msg)
@@ -507,34 +523,34 @@ void pointCloudCallback(const sensor_msgs::PointCloud2::ConstPtr& point_msg)
   cloud_c.clear();
   range_image.clear();
   transform2RangeImage(cloud_msg, cloud_ngc, cloud_g, cloud_c, range_image);
-  cout<<"total="<<cloud_msg.points.size()<<" ground pcl size="<<cloud_g.points.size()
-    <<" ceilling pcl size="<<cloud_c.points.size()<<" left size="<<cloud_ngc.points.size()<<endl;
+  //cout<<"total="<<cloud_msg.points.size()<<" ground pcl size="<<cloud_g.points.size()
+    //<<" ceilling pcl size="<<cloud_c.points.size()<<" left size="<<cloud_ngc.points.size()<<endl;
 
   cloud_ngc.header.frame_id = "map";
-	cloud_ngc.height = 1;
-	cloud_ngc.width = cloud_ngc.points.size();
-	cloud_ngc.is_dense = false;
+  cloud_ngc.height = 1;
+  cloud_ngc.width = cloud_ngc.points.size();
+  cloud_ngc.is_dense = false;
   cloud_g.header.frame_id = "map";
-	cloud_g.height = 1;
-	cloud_g.width = cloud_g.points.size();
-	cloud_g.is_dense = false;
+  cloud_g.height = 1;
+  cloud_g.width = cloud_g.points.size();
+  cloud_g.is_dense = false;
   cloud_c.header.frame_id = "map";
   cloud_c.height = 1;
-	cloud_c.width = cloud_c.points.size();
-	cloud_c.is_dense = false;
+  cloud_c.width = cloud_c.points.size();
+  cloud_c.is_dense = false;
 
   double ringnum=(cloud_msg.points.size() / 16) - 1;
   cluster_index.clear();
-	vector<int> cluster_index = range_cluster(range_image,ringnum);
+  range_cluster(range_image,ringnum, cluster_index);
   
-  ROS_WARN("%f ms to process 1 frame pcl",(ros::Time::now() - time_begin).toSec() * 1000);
+  //ROS_WARN("%f ms to process 1 frame pcl",(ros::Time::now() - time_begin).toSec() * 1000);
 }
 
 bool compare_cluster(pair<int, int> a, pair<int, int> b) {
 	return a.second < b.second;
 } //升序
 
-bool most_frequent_value(vector<int> values, vector<int> &cluster_index) {
+bool most_frequent_value(vector<int> values, vector<int> &cluster_idx) {
 	unordered_map<int, int> histcounts;
 	for (int i = 0; i < values.size(); i++) {
 		if (histcounts.find(values[i]) == histcounts.end()) {
@@ -549,7 +565,7 @@ bool most_frequent_value(vector<int> values, vector<int> &cluster_index) {
 	sort(tr.begin(), tr.end(), compare_cluster);
 	for (int i = 0; i < tr.size(); ++i) {
 		if (tr[i].second > 10) {
-			cluster_index.push_back(tr[i].first);
+			cluster_idx.push_back(tr[i].first);
 		}
 	}
 
@@ -558,7 +574,9 @@ bool most_frequent_value(vector<int> values, vector<int> &cluster_index) {
 
 void visCVClusters()
 {
-  cv::Mat bvimage = cv::Mat(16, total_frame, CV_8UC1, cv::Scalar::all(0));
+	ros::Time time2 =  ros::Time::now(); double duration = 0.0;
+
+    cv::Mat bvimage = cv::Mat(16, total_frame, CV_8UC1, cv::Scalar::all(0));
 	cv::Mat range_imagec = cv::Mat(16, total_frame, CV_8UC3, cv::Scalar::all(0));
 
 	for (auto it = range_image.begin(); it != range_image.end(); ++it) {
@@ -567,29 +585,31 @@ void visCVClusters()
 				it->second.range_zxy / 30 * 256;
 	}
 
-	//cv::resize(bvimage, bvimage, cv::Size(1000, 100), 0, 0);
-  cv::imwrite("/home/sustech1411/depth_img.png", bvimage);
+	cv::resize(bvimage, bvimage, cv::Size(1000, 100), 0, 0);
+    cv::imwrite("/home/sustech1411/depth_img.jpg", bvimage);
 
-  boost::shared_ptr<pcl::visualization::PCLVisualizer> viewer(
-			new pcl::visualization::PCLVisualizer("pcd")); //PCLVisualizer 可视化类
+    //boost::shared_ptr<pcl::visualization::PCLVisualizer> viewer(
+		//	new pcl::visualization::PCLVisualizer("pcd")); //PCLVisualizer 可视化类
 	//viewer->setBackgroundColor(0.8, 0.8, 0.8);
 	//viewer->addCoordinateSystem(1);
 
 	vector<int> cluster_id;
 	most_frequent_value(cluster_index, cluster_id);
-  cv::RNG rng(12345);
+    cv::RNG rng(12345);
 
+cout<<"pcl cluster num="<<cluster_id.size()<<endl;
+viewer->removeAllPointClouds();
 	for (int k = 0; k < cluster_id.size(); ++k) {
 		pcl::PointCloud<pcl::PointXYZRGB>::Ptr Colorcloud2(new pcl::PointCloud<pcl::PointXYZRGB>);
-		vector<float> hsv(3);
-		hsv[0] = float(k) / float(cluster_id.size());
+		vector<double> hsv(3);
+		hsv[0] = double(k) / double(cluster_id.size());
 		hsv[1] = 1;
 		hsv[2] = 1;
 
     int r = rng.uniform(0, 255);
     int g = rng.uniform(0, 255);
     int b = rng.uniform(0, 255);
-		vector<float> rgb = hsv2rgb(hsv);
+		vector<double> rgb = hsv2rgb(hsv);
 		for (int i = 0; i < total_frame; ++i) {
 			for (int j = 0; j < 16; ++j) {
 				if (cluster_index[i * 16 + j] == cluster_id[k]
@@ -601,11 +621,11 @@ void visCVClusters()
 						p.x = cloud_ngc.points[it_find->second.count_num].x;
 						p.y = cloud_ngc.points[it_find->second.count_num].y;
 						p.z = cloud_ngc.points[it_find->second.count_num].z;
-						p.r = 255;
-						p.g = 0;
-						p.b = 0;
+						p.r = rgb[0];
+						p.g = rgb[1];
+						p.b = rgb[2];
 						Colorcloud2->points.push_back(p);
-            range_imagec.at<cv::Vec3b>(it_find->second.ring_i, it_find->second.frame_j) = cv::Vec3b(r,g,b);
+            			range_imagec.at<cv::Vec3b>(it_find->second.ring_i, it_find->second.frame_j) = cv::Vec3b(r,g,b);
 					}
 				}
 			}
@@ -619,7 +639,9 @@ void visCVClusters()
 				zmin1 = 0; //make sure object is up the ground*/
 
 			pcl::visualization::PointCloudColorHandlerCustom<pcl::PointXYZRGB> color2(Colorcloud2, (b), (g), (r));
-			//viewer->addPointCloud(Colorcloud2, color2, "cloud2" + toString(k));
+			//viewer->removePointCloud("cloud2" + toString(k)); 
+			viewer->addPointCloud(Colorcloud2, color2, "cloud2" + toString(k));
+			
 		}
 	}
 
@@ -632,11 +654,13 @@ void visCVClusters()
 
   //cv::imshow("bv", range_imagec);
 	//cv::waitKey(0);
-  /*
+  
 	cv::resize(range_imagec, range_imagec, cv::Size(1000, 100), 0, 0);
-  cv::imwrite("/home/sustech1411/color_img.png", range_imagec);
-	while (!viewer->wasStopped()) {
-		viewer->spin();
+    cv::imwrite("/home/sustech1411/color_img.png", range_imagec);
+
+	
+	/*while (!viewer->wasStopped()) {
+		viewer->spinOnce(100);
 	}*/
 }
 
@@ -664,16 +688,16 @@ void depthOdomCallback(const sensor_msgs::ImageConstPtr& img,
 }
 
 void visCallback(const ros::TimerEvent& /*event*/) {
+  if (!have_pcl)
+	return;
+
   sensor_msgs::PointCloud2 pub_cloud;
-  
   //publish ground
   pcl::toROSMsg(cloud_g, pub_cloud);
   g_pub.publish(pub_cloud);
-
   //publish ceilling
   pcl::toROSMsg(cloud_c, pub_cloud);
   c_pub.publish(pub_cloud);
-
   //publish no_ground
   pcl::toROSMsg(cloud_ngc, pub_cloud);
   ngc_pub.publish(pub_cloud);
