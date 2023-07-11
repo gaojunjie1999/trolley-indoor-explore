@@ -6,9 +6,7 @@ Panels:
       Expanded:
         - /Status1
         - /Axes1
-        - /PointCloud21/Status1
-        - /PointCloud22/Status1
-      Splitter Ratio: 0.5
+      Splitter Ratio: 0.520588219165802
     Tree Height: 746
   - Class: rviz/Selection
     Name: Selection
@@ -138,9 +136,9 @@ Visualization Manager:
       Position Transformer: XYZ
       Queue Size: 10
       Selectable: true
-      Size (Pixels): 3
-      Size (m): 0.009999999776482582
-      Style: Flat Squares
+      Size (Pixels): 1
+      Size (m): 1
+      Style: Points
       Topic: /trolley/lidar/ceilling
       Unreliable: false
       Use Fixed Frame: true
@@ -158,7 +156,7 @@ Visualization Manager:
       Color: 255; 255; 255
       Color Transformer: Intensity
       Decay Time: 0
-      Enabled: false
+      Enabled: true
       Invert Rainbow: false
       Max Color: 255; 255; 255
       Min Color: 0; 0; 0
@@ -166,14 +164,14 @@ Visualization Manager:
       Position Transformer: XYZ
       Queue Size: 10
       Selectable: true
-      Size (Pixels): 3
+      Size (Pixels): 1
       Size (m): 0.009999999776482582
-      Style: Flat Squares
+      Style: Points
       Topic: /trolley/lidar/no_ground_ceilling
       Unreliable: false
       Use Fixed Frame: true
       Use rainbow: true
-      Value: false
+      Value: true
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
@@ -202,7 +200,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz/Orbit
-      Distance: 26.536954879760742
+      Distance: 26.471776962280273
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -210,17 +208,17 @@ Visualization Manager:
         Value: false
       Field of View: 0.7853981852531433
       Focal Point:
-        X: 2.896181106567383
-        Y: 0.48138511180877686
-        Z: 0.7465177774429321
+        X: 1.8516209125518799
+        Y: -0.7564796209335327
+        Z: 2.143282175064087
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.6503966450691223
+      Pitch: 0.49539685249328613
       Target Frame: <Fixed Frame>
-      Yaw: 4.525390148162842
+      Yaw: 0.12220679223537445
     Saved: ~
 Window Geometry:
   Displays:

@@ -2,6 +2,7 @@
 #include <fstream>
 #include <math.h>
 #include <unordered_map>
+#include <queue>
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
@@ -84,6 +85,8 @@ pcl::PointCloud<pcl::PointXYZITR> cloud_g, cloud_nc, cloud_c, cloud_ngc;
 unordered_map<int, Range> range_image;
 ros::Time time_begin; 
 int idx_begin = 0;
+int total_frame = 0;
+vector<int> cluster_index;
 
 
 // camera position and pose data
@@ -269,7 +272,7 @@ void transform2RangeImage(const pcl::PointCloud<pcl::PointR>& cloudIn,
 		pcl::PointCloud<pcl::PointXYZITR>& ngc_cloudOut, pcl::PointCloud<pcl::PointXYZITR>& g_cloudOut, 
       pcl::PointCloud<pcl::PointXYZITR>& c_cloudOut, unordered_map<int, Range> &unordered_map_out) 
 {
-  int total_frame = (int)(cloudIn.points.size() / 16);
+  total_frame = (int)(cloudIn.points.size() / 16);
 	pcl::PointCloud<pcl::PointXYZITR>::Ptr cloud2range(new pcl::PointCloud<pcl::PointXYZITR>);
 	pcl::PointCloud<pcl::PointXYZITR>::Ptr cloud_filtered(new pcl::PointCloud<pcl::PointXYZITR>);
   cloud2range->points.resize(cloudIn.points.size());
@@ -358,17 +361,143 @@ void transform2RangeImage(const pcl::PointCloud<pcl::PointR>& cloudIn,
   }
 }
 
+void find_neighbors(int Ix, int Iy, vector<int>& neighborudindex,
+		vector<int>& neighborlrindex) {
+	//cout<<"silinyu " << Ix<< " "<<Iy<<endl;
+	for (int x = Ix - 2; x <= Ix + 2; ++x) {
+		//cout<<"DDDDDDw "<<x<<endl;
+		if (x == Ix)
+			continue;
+		int px = x;
+		if (x < 0) {
+			px = total_frame-1;
+                        //cout<<"LL"<<endl;
+		}
+		if (x > total_frame-1) {
+			px = 0;
+                       // cout<<"RR"<<endl;
+		}
+		//cout<<px << " "<<Iy<<endl;
+		neighborlrindex.push_back(px * 16 + Iy); 
+	}
+
+	for (int y = Iy - 1; y <= Iy + 1; ++y) {
+		if (y == Iy)
+			continue;
+		if (y < 0 || y > 31)
+			continue;
+		//cout<<Ix << " "<<y<<endl;
+		neighborudindex.push_back((Ix * 16 + y)); 
+	}
+}
+
+bool compare_index(pair<int, Range> a, pair<int, Range> b) {
+	return a.first < b.first;
+} //升序
+
+vector<int> range_cluster(unordered_map<int, Range> &unordered_map_in, double ringnum) {
+
+	int current_cluster = 0;
+	vector<int> cluster_indices = vector<int>(total_frame * 16, -1);
+	float horizon_angle_resolution = 360 / total_frame * PI / 180;
+	float vertical_angle_resolution = 2.0 * PI / 180;
+
+  vector<pair<int, Range>> tr(unordered_map_in.begin(), unordered_map_in.end());
+  sort(tr.begin(), tr.end(), compare_index);
+
+	float theta_thresh = 8 * PI / 180;
+	float theta_thresh2 =30 * PI / 180;
+
+	for (int i = 0; i < tr.size(); ++i) {
+			unordered_map<int, Range>::iterator it_find;
+			it_find = unordered_map_in.find(tr[i].first);
+
+			if (it_find != unordered_map_in.end() && cluster_indices[tr[i].first] == -1) {
+				queue<vector<int>> q;
+				vector<int> indexxy(2);
+				indexxy[0] = it_find->second.frame_j;
+				indexxy[1] = it_find->second.ring_i;
+				q.push(indexxy);
+				while (q.size()>0) {
+					if (cluster_indices[q.front()[0] * 16 + q.front()[1]]	!= -1) {
+					  q.pop();
+						continue;
+					}
+ 
+					cluster_indices[q.front()[0] * 16 + q.front()[1]] =	current_cluster;
+					vector<int> neighborudid;
+					vector<int> neighborlfid;
+					unordered_map<int, Range>::iterator it_findo;
+					it_findo = unordered_map_in.find(q.front()[0] * 16 + q.front()[1]);
+					find_neighbors(q.front()[0], q.front()[1], neighborudid, neighborlfid);
+
+					if (neighborudid.size() > 0) {
+						for (int in = 0; in < neighborudid.size(); ++in) {
+							unordered_map<int, Range>::iterator it_findn;
+							it_findn = unordered_map_in.find(neighborudid[in]);
+							if (it_findn != unordered_map_in.end()) {
+								float d1 = max(it_findo->second.range_zxy,
+										it_findn->second.range_zxy);
+								float d2 = min(it_findo->second.range_zxy,
+										it_findn->second.range_zxy);
+
+
+								float angle = fabs((float) atan2(d2* sin(vertical_angle_resolution),d1- d2* cos(vertical_angle_resolution)));
+                float dmax = (it_findo->second.range_zxy) * sin(1.33*PI/180)/sin(50*PI/180 -1.33*PI/180) + 3*0.2;
+							  /*if (it_findo->second.range_xy>1.2 && fabs(d2-d1) < dmax) {
+									vector<int> indexxy(2);
+									indexxy[0] = it_findn->second.frame_j;
+									indexxy[1] = it_findn->second.ring_i;
+									q.push(indexxy);
+								}else if (angle > theta_thresh2) {*/
+                if (angle > theta_thresh2) {
+									vector<int> indexxy(2);
+									indexxy[0] = it_findn->second.frame_j;
+									indexxy[1] = it_findn->second.ring_i;
+									q.push(indexxy);
+								}
+							}
+						}
+					}
+
+					if (neighborlfid.size() > 0) {
+						for (int in = 0; in < neighborlfid.size(); ++in) {
+							unordered_map<int, Range>::iterator it_findn;
+							it_findn = unordered_map_in.find(neighborlfid[in]);
+							if (it_findn != unordered_map_in.end()) {
+								float d1 = max(it_findo->second.range_zxy,
+										it_findn->second.range_zxy);
+								float d2 = min(it_findo->second.range_zxy,
+										it_findn->second.range_zxy);
+
+								float angle = fabs((float) atan2(d2* sin(horizon_angle_resolution),d1- d2* cos(horizon_angle_resolution)));
+                                                                float dmax = (it_findo->second.range_zxy) * sin(360/ringnum*PI/180)/sin(30*PI/180 -360/ringnum*PI/180) + 3*0.2;
+							        //if (fabs(it_findo->second.range_zxy-it_findn->second.range_zxy) < dmax) {
+								if (angle > theta_thresh) {
+									//cluster_indices[neighborlfid[in]] =
+											//current_cluster;
+									vector<int> indexxy(2);
+									indexxy[0] = it_findn->second.frame_j;
+									indexxy[1] = it_findn->second.ring_i;
+                                                                        //cout<<"LLL2 "<<indexxy[0]<<" "<<indexxy[1]<<endl;
+									q.push(indexxy);
+								}
+							}
+						}
+					}
+					q.pop();
+				}
+				current_cluster++;
+			}
+
+	}
+
+	return cluster_indices;
+}
+
 void pointCloudCallback(const sensor_msgs::PointCloud2::ConstPtr& point_msg)
 {
   time_begin = ros::Time::now();
-  /*double duration = (ros::Time::now() - time_begin).toSec();
-  if (duration < 1) {
-    return;
-  } else {
-    time_begin = ros::Time::now();
-  }*/
-
-  
 
   pcl::fromROSMsg(*point_msg, cloud_msg);
   cloud_msg.header.frame_id = "map";
@@ -376,75 +505,139 @@ void pointCloudCallback(const sensor_msgs::PointCloud2::ConstPtr& point_msg)
   cloud_ngc.clear(); 
   cloud_g.clear();
   cloud_c.clear();
+  range_image.clear();
   transform2RangeImage(cloud_msg, cloud_ngc, cloud_g, cloud_c, range_image);
   cout<<"total="<<cloud_msg.points.size()<<" ground pcl size="<<cloud_g.points.size()
     <<" ceilling pcl size="<<cloud_c.points.size()<<" left size="<<cloud_ngc.points.size()<<endl;
 
-
-
-
   cloud_ngc.header.frame_id = "map";
 	cloud_ngc.height = 1;
-	cloud_ngc.width = cloud_ng->points.size();
+	cloud_ngc.width = cloud_ngc.points.size();
 	cloud_ngc.is_dense = false;
   cloud_g.header.frame_id = "map";
 	cloud_g.height = 1;
-	cloud_g.width = cloud_ng->points.size();
+	cloud_g.width = cloud_g.points.size();
 	cloud_g.is_dense = false;
   cloud_c.header.frame_id = "map";
   cloud_c.height = 1;
-	cloud_c.width = cloud_ng->points.size();
+	cloud_c.width = cloud_c.points.size();
 	cloud_c.is_dense = false;
 
   double ringnum=(cloud_msg.points.size() / 16) - 1;
+  cluster_index.clear();
 	vector<int> cluster_index = range_cluster(range_image,ringnum);
-	
+  
+  ROS_WARN("%f ms to process 1 frame pcl",(ros::Time::now() - time_begin).toSec() * 1000);
+}
 
-/*
-    //根据雷达型号，创建Mat矩阵，由于在此使用的雷达为128线，每条线上有1281个点，所以创建了一个大小为128*1281尺寸的矩阵，并用0元素初始化。
-    int horizon_num = int(cloud_msg->points.size() / 16);
-    cv::Mat range_mat = cv::Mat(16, horizon_num, CV_64FC3, cv::Scalar::all(0));
-    //cv::Mat range_mat = cv::Mat(16, horizon_num, CV_8UC3, cv::Scalar::all(0));
-    double range; //range为该点的深度值
-    int row_i, col_i; 
-    int scan_num = 16;
-    const double PI = 3.1415926;
-    int min_idx = 1000000; int max_idx = -1000000;
-    //遍历每个点，计算该点对应的Mat矩阵中的索引，并为该索引对应的Mat矩阵元素赋值
-    for(const auto pt : cloud_msg->points)
-    {
-      if (!pcl_isfinite(pt.x) || !pcl_isfinite(pt.y) || !pcl_isfinite(pt.z)) {
-        continue;
-      }
-      
-      range = (double)sqrt(pt.x * pt.x + pt.y * pt.y + pt.z * pt.z);  
-      if (range < range_min || range > range_max) {
-        continue;
-      }
+bool compare_cluster(pair<int, int> a, pair<int, int> b) {
+	return a.second < b.second;
+} //升序
 
-      row_i = pt.ring;
-      double h_angle = 180 / PI * std::atan2(pt.y, pt.x) + 180;
-      col_i = ceil(h_angle / 360 * horizon_num) - 1;  
-      cout<<"pointxyz: "<<pt.x<<" "<<pt.y<<" "<<pt.z<<" row="<<row_i<<" col="<<col_i<<" range="<<range<<endl; 
-     
-      //忽略索引不合法的点
-      if(row_i < 0 || row_i >= scan_num)
-          continue;
-      if(col_i < 0 || col_i >= horizon_num)
-          continue;
-      range_mat.at<double>(row_i, col_i) = range;
-    }
-    
-    /*std::string pic_file{"/home/sustech1411/"};
-    std::string pic_name = pic_file + std::to_string(idx_begin) + ".png";
-    idx_begin++; 
-    bool result = cv::imwrite("/home/sustech1411/a.jpg", range_mat);
+bool most_frequent_value(vector<int> values, vector<int> &cluster_index) {
+	unordered_map<int, int> histcounts;
+	for (int i = 0; i < values.size(); i++) {
+		if (histcounts.find(values[i]) == histcounts.end()) {
+			histcounts[values[i]] = 1;
+		} else {
+			histcounts[values[i]] += 1;
+		}
+	}
 
-    cv::namedWindow("map",CV_WINDOW_NORMAL);//AUTOSIZE //创建一个窗口，用于显示深度图
-    cv::imshow("map",range_mat); //在这个窗口输出图片。
-    cv::waitKey(0); //设置显示时间 */
-    
-   ROS_INFO("%f ms to process 1 frame pcl",(ros::Time::now() - time_begin).toSec() * 1000);
+	int max = 0, maxi;
+	vector<pair<int, int>> tr(histcounts.begin(), histcounts.end());
+	sort(tr.begin(), tr.end(), compare_cluster);
+	for (int i = 0; i < tr.size(); ++i) {
+		if (tr[i].second > 10) {
+			cluster_index.push_back(tr[i].first);
+		}
+	}
+
+	return true;
+}
+
+void visCVClusters()
+{
+  cv::Mat bvimage = cv::Mat(16, total_frame, CV_8UC1, cv::Scalar::all(0));
+	cv::Mat range_imagec = cv::Mat(16, total_frame, CV_8UC3, cv::Scalar::all(0));
+
+	for (auto it = range_image.begin(); it != range_image.end(); ++it) {
+		int index = it->second.count_num;
+		bvimage.at<uchar>(it->second.ring_i, it->second.frame_j) =
+				it->second.range_zxy / 30 * 256;
+	}
+
+	//cv::resize(bvimage, bvimage, cv::Size(1000, 100), 0, 0);
+  cv::imwrite("/home/sustech1411/depth_img.png", bvimage);
+
+  boost::shared_ptr<pcl::visualization::PCLVisualizer> viewer(
+			new pcl::visualization::PCLVisualizer("pcd")); //PCLVisualizer 可视化类
+	//viewer->setBackgroundColor(0.8, 0.8, 0.8);
+	//viewer->addCoordinateSystem(1);
+
+	vector<int> cluster_id;
+	most_frequent_value(cluster_index, cluster_id);
+  cv::RNG rng(12345);
+
+	for (int k = 0; k < cluster_id.size(); ++k) {
+		pcl::PointCloud<pcl::PointXYZRGB>::Ptr Colorcloud2(new pcl::PointCloud<pcl::PointXYZRGB>);
+		vector<float> hsv(3);
+		hsv[0] = float(k) / float(cluster_id.size());
+		hsv[1] = 1;
+		hsv[2] = 1;
+
+    int r = rng.uniform(0, 255);
+    int g = rng.uniform(0, 255);
+    int b = rng.uniform(0, 255);
+		vector<float> rgb = hsv2rgb(hsv);
+		for (int i = 0; i < total_frame; ++i) {
+			for (int j = 0; j < 16; ++j) {
+				if (cluster_index[i * 16 + j] == cluster_id[k]
+						&& cluster_id[k] != -1) {
+					unordered_map<int, Range>::iterator it_find;
+					it_find = range_image.find(i * 16 + j);
+					if (it_find != range_image.end()) {
+						pcl::PointXYZRGB p;
+						p.x = cloud_ngc.points[it_find->second.count_num].x;
+						p.y = cloud_ngc.points[it_find->second.count_num].y;
+						p.z = cloud_ngc.points[it_find->second.count_num].z;
+						p.r = 255;
+						p.g = 0;
+						p.b = 0;
+						Colorcloud2->points.push_back(p);
+            range_imagec.at<cv::Vec3b>(it_find->second.ring_i, it_find->second.frame_j) = cv::Vec3b(r,g,b);
+					}
+				}
+			}
+		}
+
+		if (Colorcloud2->points.size() > 5) {
+			Colorcloud2->height = 1;
+			Colorcloud2->width = Colorcloud2->points.size();
+
+			/*if (zmin1 < 0)
+				zmin1 = 0; //make sure object is up the ground*/
+
+			pcl::visualization::PointCloudColorHandlerCustom<pcl::PointXYZRGB> color2(Colorcloud2, (b), (g), (r));
+			//viewer->addPointCloud(Colorcloud2, color2, "cloud2" + toString(k));
+		}
+	}
+
+	//cout << range_image.size() << endl;
+
+	int count_num = 0;
+	for (auto it = range_image.begin(); it != range_image.end(); ++it) {
+		count_num++;
+	}
+
+  //cv::imshow("bv", range_imagec);
+	//cv::waitKey(0);
+  /*
+	cv::resize(range_imagec, range_imagec, cv::Size(1000, 100), 0, 0);
+  cv::imwrite("/home/sustech1411/color_img.png", range_imagec);
+	while (!viewer->wasStopped()) {
+		viewer->spin();
+	}*/
 }
 
 void depthOdomCallback(const sensor_msgs::ImageConstPtr& img,
@@ -484,53 +677,7 @@ void visCallback(const ros::TimerEvent& /*event*/) {
   //publish no_ground
   pcl::toROSMsg(cloud_ngc, pub_cloud);
   ngc_pub.publish(pub_cloud);
+
+  visCVClusters();
 }
 
-
-/*void publishMapInflate(bool all_info) {
-  pcl::PointXYZ pt;
-  pcl::PointCloud<pcl::PointXYZ> cloud;
-  grid_cloud = cloud;
-
-  Eigen::Vector3i min_cut = local_bound_min_;
-  Eigen::Vector3i max_cut = local_bound_max_;
-
-  if (all_info) {
-    int lmm = local_map_margin_;
-    min_cut -= Eigen::Vector3i(lmm, lmm, lmm);
-    max_cut += Eigen::Vector3i(lmm, lmm, lmm);
-  }
-
-  boundIndex(min_cut);
-  boundIndex(max_cut);
-
-  for (int x = min_cut(0); x <= max_cut(0); ++x)
-    for (int y = min_cut(1); y <= max_cut(1); ++y)
-      for (int z = min_cut(2); z <= max_cut(2); ++z) {
-        if (occupancy_buffer_inflate_[toAddress(x, y, z)] == 0) continue;
-
-        Eigen::Vector3d pos;
-        indexToPos(Eigen::Vector3i(x, y, z), pos);
-        if (pos(2) > visualization_truncate_height_) continue;
-
-        pt.x = pos(0);
-        pt.y = pos(1);
-        pt.z = pos(2);
-        cloud.push_back(pt);
-      }
-
-  cloud.width = cloud.points.size();
-  cloud.height = 1;
-  cloud.is_dense = true;
-  cloud.header.frame_id = frame_id_;
-  sensor_msgs::PointCloud2 cloud_msg;
-
-  pcl::toROSMsg(cloud, cloud_msg);
-  map_inf_pub_.publish(cloud_msg);
-
-  if (save_pcd && cloud.width > 10) {
-    cout<<"saving pcd file"<<endl;
-    pcl::io::savePCDFileASCII ("/home/hitcsc/map_ws/src/velodyne_pcl_parser/src/test_pcd.pcd", cloud); //将点云保存到PCD文件中
-  }
-  // ROS_INFO("pub map");
-}*/
