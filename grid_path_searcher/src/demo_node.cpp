@@ -52,6 +52,7 @@
 #include <message_filters/time_synchronizer.h>
 #include <tf/transform_broadcaster.h>
 #include "ground_remove2.h"
+#include "cloud_processor.h"
 
 
 #define logit(x) (log((x) / (1 - (x))))
@@ -74,6 +75,7 @@ struct Range {
 	int count_num;
 };
 
+CloudProcessor cloud_processor;
 string frame_id_;
 double height_thresh, range_min, range_max;
 ros::Publisher ngc_pub, g_pub, c_pub;
@@ -513,37 +515,48 @@ void range_cluster(unordered_map<int, Range> &unordered_map_in, double ringnum, 
 
 void pointCloudCallback(const sensor_msgs::PointCloud2::ConstPtr& point_msg)
 {
-  time_begin = ros::Time::now();
+	time_begin = ros::Time::now();
 
-  pcl::fromROSMsg(*point_msg, cloud_msg);
-  cloud_msg.header.frame_id = "map";
-  
-  cloud_ngc.clear(); 
-  cloud_g.clear();
-  cloud_c.clear();
-  range_image.clear();
-  transform2RangeImage(cloud_msg, cloud_ngc, cloud_g, cloud_c, range_image);
-  //cout<<"total="<<cloud_msg.points.size()<<" ground pcl size="<<cloud_g.points.size()
-    //<<" ceilling pcl size="<<cloud_c.points.size()<<" left size="<<cloud_ngc.points.size()<<endl;
+	pcl::fromROSMsg(*point_msg, cloud_msg);
+	cloud_msg.header.frame_id = "map";
+	
+	//cloud_processor->reset();
+	cloud_processor.setCloudInput(cloud_msg);
+	cloud_processor.processCloud();
 
-  cloud_ngc.header.frame_id = "map";
-  cloud_ngc.height = 1;
-  cloud_ngc.width = cloud_ngc.points.size();
-  cloud_ngc.is_dense = false;
-  cloud_g.header.frame_id = "map";
-  cloud_g.height = 1;
-  cloud_g.width = cloud_g.points.size();
-  cloud_g.is_dense = false;
-  cloud_c.header.frame_id = "map";
-  cloud_c.height = 1;
-  cloud_c.width = cloud_c.points.size();
-  cloud_c.is_dense = false;
 
-  double ringnum=(cloud_msg.points.size() / 16) - 1;
-  cluster_index.clear();
-  range_cluster(range_image,ringnum, cluster_index);
-  
-  //ROS_WARN("%f ms to process 1 frame pcl",(ros::Time::now() - time_begin).toSec() * 1000);
+
+
+
+
+	//remove ground and ceilling use plane fitting & to hash range image
+	cloud_ngc.clear(); 
+	cloud_g.clear();
+	cloud_c.clear();
+	range_image.clear();
+	transform2RangeImage(cloud_msg, cloud_ngc, cloud_g, cloud_c, range_image);
+	//cout<<"total="<<cloud_msg.points.size()<<" ground pcl size="<<cloud_g.points.size()
+		//<<" ceilling pcl size="<<cloud_c.points.size()<<" left size="<<cloud_ngc.points.size()<<endl;
+
+	cloud_ngc.header.frame_id = "map";
+	cloud_ngc.height = 1;
+	cloud_ngc.width = cloud_ngc.points.size();
+	cloud_ngc.is_dense = false;
+	cloud_g.header.frame_id = "map";
+	cloud_g.height = 1;
+	cloud_g.width = cloud_g.points.size();
+	cloud_g.is_dense = false;
+	cloud_c.header.frame_id = "map";
+	cloud_c.height = 1;
+	cloud_c.width = cloud_c.points.size();
+	cloud_c.is_dense = false;
+
+	double ringnum=(cloud_msg.points.size() / 16) - 1;
+	cluster_index.clear();
+	range_cluster(range_image,ringnum, cluster_index);
+
+	
+	//ROS_WARN("%f ms to process 1 frame pcl",(ros::Time::now() - time_begin).toSec() * 1000);
 }
 
 bool compare_cluster(pair<int, int> a, pair<int, int> b) {

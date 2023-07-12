@@ -37,6 +37,7 @@ set(CMAKE_CXX_FLAGS "-std=c++14 ${CMAKE_CXX_FLAGS} -O3 -Wall") # -Wextra -Werror
 add_executable(velodyne_pcl_parser
     src/demo_node.cpp
     src/ground_remove2.cpp
+    src/cloud_processor.cpp
     )
 
 target_link_libraries(velodyne_pcl_parser 
