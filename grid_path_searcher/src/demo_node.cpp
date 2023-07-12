@@ -520,7 +520,7 @@ void pointCloudCallback(const sensor_msgs::PointCloud2::ConstPtr& point_msg)
 	pcl::fromROSMsg(*point_msg, cloud_msg);
 	cloud_msg.header.frame_id = "map";
 	
-	cloud_processor->reset();
+	//cloud_processor.reset();
 	cloud_processor.setCloudInput(cloud_msg);
 	cloud_processor.processCloud();
 

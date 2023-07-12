@@ -53,7 +53,7 @@ enum Filter {None, SG, Gaussian};
 class CloudProcessor
 {
 private:
-	pcl::PointCloud<pcl::PointR> cloud_input;
+	pcl::PointCloud<pcl::PointR> cloud_input, cloud_ng;
 	int input_cloud_size, col_num, row_num;
 	double vertical_deg, horizontal_deg;
 	double range_min = 0.15;
@@ -79,22 +79,14 @@ public:
 	void getSinCosVec();
 	void ApplySavitskyGolaySmoothing() ;
 	cv::Mat GetSavitskyGolayKernel() const;
-	void LabelPixel(int label, const int& row_id, const int& col_id);
+	void LabelPixel(int label, int& row_id, int& col_id);
 	void GetNeighbors(queue<pair<int, int>>& labeling_queue, const int& cur_row, const int& cur_col);
 	cv::Mat GetUniformKernel(int window_size, int type) const;
-	void ZeroOutGroundBFS() const;
+	void ZeroOutGroundBFS();
+	void toCloud();
 };
 
-void CloudProcessor::reset()
-{
-	range_mat = cv::Mat::zeros(range_mat.size(), range_mat.type());
-	angle_mat = cv::Mat::zeros(angle_mat.size(), angle_mat.type());
-	no_ground_image = cv::Mat::zeros(no_ground_image.size(), no_ground_image.type());
-	label_mat = cv::Mat::zeros(label_mat.size(), label_mat.type());
 
-	sines_vec.clear();
-	cosines_vec.clear();
-}
 
 
 #endif
