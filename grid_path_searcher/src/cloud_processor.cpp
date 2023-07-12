@@ -4,7 +4,7 @@
 
 void CloudProcessor::setCloudInput(pcl::PointCloud<pcl::PointR> cloud_input_)
 {
-    ROS_WARN("new_image");
+    //ROS_WARN("new_image");
 	cloud_input = cloud_input_;
 	input_cloud_size = cloud_input.points.size();
     //cout<<cloud_input.points.size()<<endl;
@@ -61,17 +61,176 @@ void CloudProcessor::toAngleImage()
 		}
 	}
 
-    //angle smoothing
-    auto smoothed_image = ApplySavitskyGolaySmoothing(angle_mat, 5);
+    //angle mat smoothing
+    switch (filter_type)
+    {
+    case None:
+        smoothed_mat = angle_mat;
+        break;
+    case SG:
+        ApplySavitskyGolaySmoothing();
+    default:
+        break;
+    }
+
+    //angle-based ground removal
+    ZeroOutGroundBFS();
 }
 
-Mat CloudProcessor::ApplySavitskyGolaySmoothing(const Mat& image, int window_size) {
-  Mat kernel = GetSavitskyGolayKernel(window_size);
+void CloudProcessor::ZeroOutGroundBFS() const {
 
-  Mat smoothed_image;  // init an empty smoothed image
-  cv::filter2D(image, smoothed_image, SAME_OUTPUT_TYPE, kernel, ANCHOR_CENTER,
-               0, cv::BORDER_REFLECT101);
-  return smoothed_image;
+    label_mat = cv::Mat::zeros(range_mat.size(), range_mat.type());
+
+    for (int col_id = 0; col_id < range_mat.cols; col_id++) {
+        int r = 0;
+        while (r < range_mat.rows && range_mat.at<float>(r, c) < 0.001f) {
+            ++r;
+        }
+        
+        if (label_mat.at<float>(r, c) > 0) 
+            continue;
+        if (angle_mat.at<float>(r, c) > start_angle_thresh) 
+            continue;
+        LabelPixel(1, r, c);
+    }
+
+    int new_window_size = std::max(window_size - 2, 3);
+    cv::Mat kernel = GetUniformKernel(new_window_size, CV_8U);
+    cv::Mat dilated = cv::Mat::zeros(label_mat.size(), label_mat.type());
+    cv::dilate(label_mat, dilated, kernel);
+    for (int r = 0; r < dilated.rows; ++r) {
+        for (int c = 0; c < dilated.cols; ++c) {
+            if (dilated.at<uint16_t>(r, c) == 0) {
+                // all unlabeled points are non-ground
+                no_ground_image.at<float>(r, c) = range_mat.at<float>(r, c);
+            }
+        }
+    }
+    return res;
+}
+
+cv::Mat CloudProcessor::GetUniformKernel(int new_window_size, int type) const {
+  if (new_window_size % 2 == 0) {
+    throw std::logic_error("only odd window size allowed");
+  }
+  cv::Mat kernel = cv::Mat::zeros(new_window_size, 1, type);
+  kernel.at<float>(0, 0) = 1;
+  kernel.at<float>(new_window_size - 1, 0) = 1;
+  kernel /= 2;
+  r
+}
+
+void CloudProcessor::LabelPixel(int label, const int& row_id, const int& col_id)
+{
+    queue<pair<int, int>> labeling_queue;
+    labeling_queue.push(make_pair(row_id, col_id));
+    while (!labeling_queue.empty()) {
+        int cur_row = labeling_queue.front().first;
+        int cur_col = labeling_queue.front().second;
+        labeling_queue.pop();
+
+        int cur_label = label_mat.at<cur_row, cur_col>;
+        if (cur_label > 0)
+            continue;
+        abel_mat.at<cur_row, cur_col> = label;
+
+        auto current_depth = range_mat.at<cur_row, cur_col>;
+        if (current_depth < 0.001f) {
+            continue;
+        
+        GetNeighbors(labeling_queue, cur_row, cur_col);
+      }
+    }
+}
+
+void CloudProcessor::GetNeighbors(queue<pair<int, int>>& labeling_queue, const int& cur_row, const int& cur_col)
+{
+    for (int i = cur_row - step_row, i <= cur_row + step_row; i++) {
+        if (i < 0 || i >= row_num)
+            continue;
+
+        for (int j = cur_col - step_col, i <= cur_col + step_col; j++) {
+            if (i == cur_row && j == cur_col)
+                continue;
+            if (j < 0 || j >= col_num)
+                continue;
+            if (label_mat.at<i, j> > 0)
+                continue;
+            if (i == 0 || smoothed_mat.at<i, j> < ground_angle_thresh) 
+                labeling_queue.push(make_pair(i, j));    
+        }
+    }
+}
+
+void CloudProcessor::ApplySavitskyGolaySmoothing() 
+{
+  cv::Mat kernel = GetSavitskyGolayKernel();
+  cv::filter2D(angle_mat, smoothed_mat, -1, kernel, cv::Point(-1, -1), 0, cv::BORDER_REFLECT101);
+}
+
+cv::Mat CloudProcessor::GetSavitskyGolayKernel() const 
+{
+  if (window_size % 2 == 0) {
+    throw std::logic_error("only odd window size allowed");
+  }
+  bool window_size_ok = window_size == 5 || window_size == 7 ||
+                        window_size == 9 || window_size == 11;
+  if (!window_size_ok) {
+    throw std::logic_error("bad window size");
+  }
+  // below are no magic constants. See Savitsky-golay filter.
+  cv::Mat kernel;
+  switch (window_size) {
+    case 5:
+      kernel = cv::Mat::zeros(window_size, 1, CV_32F);
+      kernel.at<float>(0, 0) = -3.0f;
+      kernel.at<float>(0, 1) = 12.0f;
+      kernel.at<float>(0, 2) = 17.0f;
+      kernel.at<float>(0, 3) = 12.0f;
+      kernel.at<float>(0, 4) = -3.0f;
+      kernel /= 35.0f;
+      return kernel;
+    case 7:
+      kernel = cv::Mat::zeros(window_size, 1, CV_32F);
+      kernel.at<float>(0, 0) = -2.0f;
+      kernel.at<float>(0, 1) = 3.0f;
+      kernel.at<float>(0, 2) = 6.0f;
+      kernel.at<float>(0, 3) = 7.0f;
+      kernel.at<float>(0, 4) = 6.0f;
+      kernel.at<float>(0, 5) = 3.0f;
+      kernel.at<float>(0, 6) = -2.0f;
+      kernel /= 21.0f;
+      return kernel;
+    case 9:
+      kernel = cv::Mat::zeros(window_size, 1, CV_32F);
+      kernel.at<float>(0, 0) = -21.0f;
+      kernel.at<float>(0, 1) = 14.0f;
+      kernel.at<float>(0, 2) = 39.0f;
+      kernel.at<float>(0, 3) = 54.0f;
+      kernel.at<float>(0, 4) = 59.0f;
+      kernel.at<float>(0, 5) = 54.0f;
+      kernel.at<float>(0, 6) = 39.0f;
+      kernel.at<float>(0, 7) = 14.0f;
+      kernel.at<float>(0, 8) = -21.0f;
+      kernel /= 231.0f;
+      return kernel;
+    case 11:
+      kernel = cv::Mat::zeros(window_size, 1, CV_32F);
+      kernel.at<float>(0, 0) = -36.0f;
+      kernel.at<float>(0, 1) = 9.0f;
+      kernel.at<float>(0, 2) = 44.0f;
+      kernel.at<float>(0, 3) = 69.0f;
+      kernel.at<float>(0, 4) = 84.0f;
+      kernel.at<float>(0, 5) = 89.0f;
+      kernel.at<float>(0, 6) = 84.0f;
+      kernel.at<float>(0, 7) = 69.0f;
+      kernel.at<float>(0, 8) = 44.0f;
+      kernel.at<float>(0, 9) = 9.0f;
+      kernel.at<float>(0, 10) = -36.0f;
+      kernel /= 429.0f;
+      return kernel;
+  }
+  return kernel;
 }
 
 void CloudProcessor::toRangeImage()
@@ -93,7 +252,3 @@ void CloudProcessor::toRangeImage()
     }
 }
 
-void CloudProcessor::reset()
-{
-
-}

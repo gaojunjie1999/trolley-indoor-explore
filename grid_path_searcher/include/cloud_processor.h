@@ -48,6 +48,8 @@
 using namespace std;
 using namespace Eigen;
 
+enum Filter {None, SG, Gaussian};
+
 class CloudProcessor
 {
 private:
@@ -57,10 +59,15 @@ private:
 	double range_min = 0.15;
 	double range_max = 50;
 	vector<float> sines_vec, cosines_vec;
-
+	Filter filter_type{None};
+	int window_size{5};
+	double start_angle_thresh{30.0 / 180.0 * Pi};
+	int step_row{1}, step_col{1};
+	double ground_angle_thresh{5.0 / 180.0 * Pi};
 
 public:
-	cv::Mat range_mat, angle_mat;
+	cv::Mat range_mat, angle_mat, smoothed_mat, no_ground_image, label_mat;
+	
 
 public:
 
@@ -70,9 +77,24 @@ public:
 	void processCloud();
 	void toAngleImage();
 	void getSinCosVec();
-
+	void ApplySavitskyGolaySmoothing() ;
+	cv::Mat GetSavitskyGolayKernel() const;
+	void LabelPixel(int label, const int& row_id, const int& col_id);
+	void GetNeighbors(queue<pair<int, int>>& labeling_queue, const int& cur_row, const int& cur_col);
+	cv::Mat GetUniformKernel(int window_size, int type) const;
+	void ZeroOutGroundBFS() const;
 };
 
+void CloudProcessor::reset()
+{
+	range_mat = cv::Mat::zeros(range_mat.size(), range_mat.type());
+	angle_mat = cv::Mat::zeros(angle_mat.size(), angle_mat.type());
+	no_ground_image = cv::Mat::zeros(no_ground_image.size(), no_ground_image.type());
+	label_mat = cv::Mat::zeros(label_mat.size(), label_mat.type());
+
+	sines_vec.clear();
+	cosines_vec.clear();
+}
 
 
 #endif
