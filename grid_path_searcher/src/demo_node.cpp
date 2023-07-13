@@ -523,6 +523,14 @@ void pointCloudCallback(const sensor_msgs::PointCloud2::ConstPtr& point_msg)
 
 	cloud_processor.setCloudInput(cloud_msg);
 	cloud_processor.processCloud();
+	auto cloud_ng = cloud_processor.cloud_output;
+		cloud_ng.header.frame_id = "map";
+	cloud_ng.height = 1;
+	cloud_ng.width = cloud_ng.points.size();
+	sensor_msgs::PointCloud2 pub_cloud;
+  //publish ground
+  pcl::toROSMsg(cloud_ng, pub_cloud);
+  ngc_pub.publish(pub_cloud);
 	return;
 
 
@@ -536,8 +544,8 @@ void pointCloudCallback(const sensor_msgs::PointCloud2::ConstPtr& point_msg)
 	cloud_c.clear();
 	range_image.clear();
 	transform2RangeImage(cloud_msg, cloud_ngc, cloud_g, cloud_c, range_image);
-	//cout<<"total="<<cloud_msg.points.size()<<" ground pcl size="<<cloud_g.points.size()
-		//<<" ceilling pcl size="<<cloud_c.points.size()<<" left size="<<cloud_ngc.points.size()<<endl;
+	cout<<"total="<<cloud_msg.points.size()<<" ground pcl size="<<cloud_g.points.size()
+		<<" ceilling pcl size="<<cloud_c.points.size()<<" left size="<<cloud_ngc.points.size()<<endl;
 
 	cloud_ngc.header.frame_id = "map";
 	cloud_ngc.height = 1;
@@ -702,6 +710,7 @@ void depthOdomCallback(const sensor_msgs::ImageConstPtr& img,
 }
 
 void visCallback(const ros::TimerEvent& /*event*/) {
+
   if (!have_pcl)
 	return;
 
@@ -714,7 +723,7 @@ void visCallback(const ros::TimerEvent& /*event*/) {
   c_pub.publish(pub_cloud);
   //publish no_ground
   pcl::toROSMsg(cloud_ngc, pub_cloud);
-  ngc_pub.publish(pub_cloud);
+  //ngc_pub.publish(pub_cloud);
 
   visCVClusters();
   have_pcl = false;

@@ -59,14 +59,14 @@ private:
 	double range_min = 0.15;
 	double range_max = 50;
 	vector<float> sines_vec, cosines_vec, horizontal_angles, vertical_angles;
-	Filter filter_type{None};
+	Filter filter_type{SG};
 	int window_size{5};
-	double start_angle_thresh{30.0 / 180.0 * Pi};
-	int step_row{1}, step_col{1};
+	double start_angle_thresh{45.0 / 180.0 * Pi};
+	int step_row{2}, step_col{1};
 	double ground_angle_thresh{5.0 / 180.0 * Pi};
 
 public:
-	cv::Mat range_mat, angle_mat, smoothed_mat, no_ground_image, label_mat;
+	cv::Mat range_mat, angle_mat, smoothed_mat, no_ground_image, label_mat, dilated;
 	pcl::PointCloud<pcl::PointR> cloud_output;
 
 public:
@@ -78,12 +78,12 @@ public:
 	void getSinCosVec();
 	void ApplySavitskyGolaySmoothing() ;
 	cv::Mat GetSavitskyGolayKernel() const;
-	void LabelPixel(int label, int& row_id, int& col_id);
+	void LabelPixel(uint16_t label, int row_id, int col_id);
 	void GetNeighbors(queue<pair<int, int>>& labeling_queue, const int& cur_row, const int& cur_col);
 	cv::Mat GetUniformKernel(int window_size, int type) const;
-	void ZeroOutGroundBFS();
+	void ZeroOutGroundCeillingBFS();
 	void toCloud();
-	void UnprojectPoint(cv::Mat image, int row, int col, pcl::PointR& pt);
+	void UnprojectPoint(const cv::Mat image, int row, int col, pcl::PointR& pt);
 
 };
 
