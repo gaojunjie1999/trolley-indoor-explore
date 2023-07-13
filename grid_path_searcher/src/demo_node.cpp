@@ -520,9 +520,10 @@ void pointCloudCallback(const sensor_msgs::PointCloud2::ConstPtr& point_msg)
 	pcl::fromROSMsg(*point_msg, cloud_msg);
 	cloud_msg.header.frame_id = "map";
 	
-	//cloud_processor.reset();
+
 	cloud_processor.setCloudInput(cloud_msg);
 	cloud_processor.processCloud();
+	return;
 
 
 
@@ -716,5 +717,6 @@ void visCallback(const ros::TimerEvent& /*event*/) {
   ngc_pub.publish(pub_cloud);
 
   visCVClusters();
+  have_pcl = false;
 }
 

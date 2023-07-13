@@ -58,7 +58,7 @@ private:
 	double vertical_deg, horizontal_deg;
 	double range_min = 0.15;
 	double range_max = 50;
-	vector<float> sines_vec, cosines_vec;
+	vector<float> sines_vec, cosines_vec, horizontal_angles, vertical_angles;
 	Filter filter_type{None};
 	int window_size{5};
 	double start_angle_thresh{30.0 / 180.0 * Pi};
@@ -67,10 +67,9 @@ private:
 
 public:
 	cv::Mat range_mat, angle_mat, smoothed_mat, no_ground_image, label_mat;
-	
+	pcl::PointCloud<pcl::PointR> cloud_output;
 
 public:
-
 	void setCloudInput(pcl::PointCloud<pcl::PointR> cloud_input_);
 	void reset();
 	void toRangeImage();
@@ -84,6 +83,8 @@ public:
 	cv::Mat GetUniformKernel(int window_size, int type) const;
 	void ZeroOutGroundBFS();
 	void toCloud();
+	void UnprojectPoint(cv::Mat image, int row, int col, pcl::PointR& pt);
+
 };
 
 

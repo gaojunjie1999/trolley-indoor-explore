@@ -7,18 +7,21 @@ void CloudProcessor::setCloudInput(pcl::PointCloud<pcl::PointR> cloud_input_)
     //ROS_WARN("new_image");
 	cloud_input = cloud_input_;
 	input_cloud_size = cloud_input.points.size();
-    //cout<<cloud_input.points.size()<<endl;
+    cout<<"input size="<<cloud_input.points.size()<<endl;
 	row_num = 16;
 	col_num = input_cloud_size / 16;
 	vertical_deg = 2.0 * 180.0 / Pi;
 	horizontal_deg = 360.0 / double(col_num) * 180.0 / Pi;
 	range_mat = cv::Mat::zeros(row_num, col_num, CV_32F);
+    reset();
 }
 
 void CloudProcessor::processCloud()
 {
 	toRangeImage();
 	toAngleImage();
+    ZeroOutGroundBFS();
+    toCloud();
 }
 
 void CloudProcessor::getSinCosVec()
@@ -72,16 +75,11 @@ void CloudProcessor::toAngleImage()
     default:
         break;
     }
-
-    //angle-based ground removal
-    ZeroOutGroundBFS();
 }
 
 void CloudProcessor::ZeroOutGroundBFS()
 {
-
     label_mat = cv::Mat::zeros(range_mat.size(), CV_16U);
-
     for (int c = 0; c < range_mat.cols; c++) {
         int r = 0;
         while (r < range_mat.rows && range_mat.at<float>(r, c) < 0.001f) {
@@ -90,17 +88,17 @@ void CloudProcessor::ZeroOutGroundBFS()
         
         if (label_mat.at<uint16_t>(r, c) > 0) 
             continue;
-        if (r == 0 && smoothed_mat.at<float>(r, c) > start_angle_thresh) 
+        if (r == 0 && smoothed_mat.at<float>(1, c) > start_angle_thresh) 
             continue;
         LabelPixel(1, r, c);
     }
-
+//cout<<666<<endl;
     int new_window_size = std::max(window_size - 2, 3);
     cv::Mat kernel = GetUniformKernel(new_window_size, CV_8U);
     cv::Mat dilated = cv::Mat::zeros(label_mat.size(), label_mat.type());
     cv::dilate(label_mat, dilated, kernel);
-
     no_ground_image = cv::Mat::zeros(range_mat.size(), range_mat.type());
+//cout<<777<<endl;
     for (int r = 0; r < dilated.rows; ++r) {
         for (int c = 0; c < dilated.cols; ++c) {
             if (dilated.at<uint16_t>(r, c) == 0) {
@@ -119,10 +117,12 @@ cv::Mat CloudProcessor::GetUniformKernel(int new_window_size, int type) const {
   kernel.at<float>(0, 0) = 1;
   kernel.at<float>(new_window_size - 1, 0) = 1;
   kernel /= 2;
+  return kernel;
 }
 
 void CloudProcessor::LabelPixel(int label, int& row_id, int& col_id)
 {
+    //cout<<777<<endl;
     queue<pair<int, int>> labeling_queue;
     labeling_queue.push(make_pair(row_id, col_id));
     while (!labeling_queue.empty()) {
@@ -151,7 +151,7 @@ void CloudProcessor::GetNeighbors(queue<pair<int, int>>& labeling_queue, const i
             continue;
         if (label_mat.at<uint16_t>(i, cur_col) > 0)
             continue;
-        if ((i == 0 && smoothed_mat.at<float>(i, cur_col) < start_angle_thresh) 
+        if ((i == 0 && smoothed_mat.at<float>(1, cur_col) < start_angle_thresh) 
             || (i > 0 && (fabs(smoothed_mat.at<float>(i, cur_col) - smoothed_mat.at<float>(cur_row, cur_col)) < ground_angle_thresh))) {
             labeling_queue.push(make_pair(i, cur_col)); 
         }
@@ -162,9 +162,9 @@ void CloudProcessor::GetNeighbors(queue<pair<int, int>>& labeling_queue, const i
                 continue;
             if (label_mat.at<uint16_t>(cur_row, j) > 0)
                 continue;
-            if ((cur_row == 0 && smoothed_mat.at<float>(cur_row, j) < start_angle_thresh) 
+            if ((cur_row == 0 && smoothed_mat.at<float>(1, j) < start_angle_thresh) 
                 || (cur_row > 0 && (fabs(smoothed_mat.at<float>(cur_row, j) - smoothed_mat.at<float>(cur_row, cur_col)) < ground_angle_thresh))) {
-                labeling_queue.push(make_pair(i, cur_col)); 
+                labeling_queue.push(make_pair(cur_row, j)); 
             }
     }
 }
@@ -242,14 +242,29 @@ cv::Mat CloudProcessor::GetSavitskyGolayKernel() const
 
 void CloudProcessor::toCloud()
 {
-    pcl::PointXYZITR pt;
     for (int i = 0; i < row_num; i++) {
         for (int j = 0; j < col_num; j++) {
-            if (no_ground_image.at<float(i, j) != 0) {
-                pt = 
-            }
+            if (no_ground_image.at<float>(i, j) < 0.0001f)
+                continue;
+            pcl::PointR pt;
+            UnprojectPoint(no_ground_image, i, j, pt);
+            cloud_output.points.push_back(pt);
         }
     }
+    cout<<"out size="<<cloud_output.points.size()<<endl;
+}
+
+void CloudProcessor::UnprojectPoint(cv::Mat image, int row, int col, pcl::PointR& pt)
+{
+    float depth = image.at<float>(row, col);
+    double angle_z = (-15.0 + 2.0 * row) / 180.0 * Pi;
+    double angle_xy = ((col + 1) * 360.0 / col_num - 180.0) * Pi / 180.0;
+
+    pt.x = depth * cos(angle_z) * cos(angle_xy);
+    pt.y = depth * cos(angle_z) * sin(angle_xy);
+    pt.z = depth * sin(angle_z);
+    pt.ring = row;
+    //pt.intensity = 0;
 }
 
 void CloudProcessor::toRangeImage()
@@ -277,7 +292,9 @@ void CloudProcessor::reset()
 	//angle_mat = cv::Mat::zeros(angle_mat.size(), angle_mat.type());
 	//no_ground_image = cv::Mat::zeros(no_ground_image.size(), no_ground_image.type());
 	//label_mat = cv::Mat::zeros(label_mat.size(), label_mat.type());
-
+    vertical_angles.clear();
+    horizontal_angles.clear();
 	sines_vec.clear();
 	cosines_vec.clear();
+    cloud_output.points.clear();
 }
