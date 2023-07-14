@@ -296,6 +296,113 @@ cv::Mat CloudProcessor::GetSavitskyGolayKernel() const
   return kernel;
 }
 
+void CloudProcessor::ExtractContour(const pcl::PointCloud<pcl::PointR>& cur_cloud, vector<vector<Vector3d>>realworld_contour)
+{
+    img_mat = cv::Mat::zeros(MAT_SIZE, MAT_SIZE, CV_32FC1);
+    //from 3d cloud to 2d image
+    int row_idx, col_idx, inf_row, inf_col;
+    const std::vector<int> inflate_vec{-1, 0, 1};
+    for (const auto& pcl_p : cur_cloud.points) {
+        PointToImgSub(pcl_p, row_idx, col_idx);
+        if (!IsIdxesInImg(row_idx, col_idx)) 
+            continue;
+        for (const auto& dr : inflate_vec) {
+            for (const auto& dc : inflate_vec) {
+                inf_row = row_idx + dr;
+                inf_col = col_idx + dc;
+                if (IsIdxesInImg(inf_row, inf_col)) {
+                    img_mat.at<float>(inf_row, inf_col) += 1.0;
+                }
+            }
+        }
+    }
+    cv::imwrite("/home/sustech1411/img_before_resize.png", img_mat);
+
+    cv::Mat Rimg;
+    //resize & blur
+    img_mat.convertTo(Rimg, CV_8UC1, 255);
+    cv::resize(Rimg, Rimg, cv::Size(), resize_ratio, resize_ratio, cv::InterpolationFlags::INTER_LINEAR);
+    cv::boxFilter(Rimg, Rimg, -1, cv::Size(blur_size, blur_size), cv::Point2i(-1, -1), false);
+    cv::imwrite("/home/sustech1411/img_after_resize.png", Rimg);
+
+    //ExtractRefinedContours
+    std::vector<std::vector<cv::Point2i>> raw_contours;
+    std::vector<vector<cv::Point2f>> refined_contours;
+    std::vector<cv::Vec4i> refined_hierarchy;
+    //refined_contours.clear(), refined_hierarchy.clear();
+    cv::findContours(Rimg, raw_contours, refined_hierarchy, 
+                     cv::RetrievalModes::RETR_TREE, 
+                     cv::ContourApproximationModes::CHAIN_APPROX_TC89_L1);
+                     
+    refined_contours.resize(raw_contours.size());
+    for (std::size_t i=0; i<raw_contours.size(); i++) {
+        // using Ramer–Douglas–Peucker algorithm url: https://en.wikipedia.org/wiki/Ramer%E2%80%93Douglas%E2%80%93Peucker_algorithm
+        cv::approxPolyDP(raw_contours[i], refined_contours[i], dist_thresh1, true);
+    }
+    TopoFilterContours(refined_contours); 
+    AdjecentDistanceFilter(refined_contours);
+
+
+}
+
+
+void CloudProcessor::AdjecentDistanceFilter(std::vector<std::vector<cv::Point2f>>& contoursInOut) {
+    /* filter out vertices that are overlapped with neighbor */
+    std::unordered_set<int> remove_idxs;
+    for (std::size_t i=0; i<contoursInOut.size(); i++) { 
+        const auto c = contoursInOut[i];
+        const std::size_t c_size = c.size();
+        std::size_t refined_idx = 0;
+        for (std::size_t j=0; j<c_size; j++) {
+            cv::Point2f p = c[j]; 
+            if (refined_idx < 1 || PixelDistance(contoursInOut[i][refined_idx-1], p) > dist_thresh2) {
+                /** Reduce wall nodes */
+                RemoveWallConnection(contoursInOut[i], p, refined_idx);
+                contoursInOut[i][refined_idx] = p;
+                refined_idx ++;
+            }
+        }
+        /** Reduce wall nodes */
+        RemoveWallConnection(contoursInOut[i], contoursInOut[i][0], refined_idx);
+        contoursInOut[i].resize(refined_idx);
+        if (refined_idx > 1 && PixelDistance(contoursInOut[i].front(), contoursInOut[i].back()) < dist_thresh2) {
+            contoursInOut[i].pop_back();
+        }
+        if (contoursInOut[i].size() < 3) remove_idxs.insert(i);
+    }
+    if (!remove_idxs.empty()) { // clear contour with vertices size less that 3
+        std::vector<CVPointStack> temp_contours = contoursInOut;
+        contoursInOut.clear();
+        for (int i=0; i<temp_contours.size(); i++) {
+            if (remove_idxs.find(i) != remove_idxs.end()) continue;
+            contoursInOut.push_back(temp_contours[i]);
+        }
+    }
+}
+
+
+void CloudProcessor::TopoFilterContours(std::vector<vector<cv::Point2f>>& contoursInOut) {
+    std::unordered_set<int> remove_idxs;
+    for (int i=0; i<contoursInOut.size(); i++) {
+        if (remove_idxs.find(i) != remove_idxs.end()) 
+            continue;
+        const auto poly = contoursInOut[i];
+        if (poly.size() < 3) {
+            remove_idxs.insert(i);
+        } else {
+            InternalContoursIdxs(refined_hierarchy_, i, remove_idxs);
+        }
+    }
+    if (!remove_idxs.empty()) {
+        std::vector<vector<cv::Point2f>> temp_contours = contoursInOut;
+        contoursInOut.clear();
+        for (int i=0; i<temp_contours.size(); i++) {
+            if (remove_idxs.find(i) != remove_idxs.end()) continue;
+            contoursInOut.push_back(temp_contours[i]);
+        }
+    }
+}
+
 void CloudProcessor::toCloud(const cv::Mat& image_mat)
 {
     pcl::PointCloud<pcl::PointR> pt_cloud; 

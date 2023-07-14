@@ -11,6 +11,7 @@
 #include <mutex>  
 #include <ros/ros.h>
 #include <ros/console.h>
+#include <unordered_set>
 //PCL
 #include <pcl/common/transforms.h>
 #include <pcl/ModelCoefficients.h>
@@ -54,6 +55,7 @@ enum ImageType {NGCW, GC, CONTOUR};
 class CloudProcessor
 {
 private:
+	//range image related
 	pcl::PointCloud<pcl::PointR> cloud_input, cloud_ng;
 	int input_cloud_size, col_num, row_num;
 	double vertical_deg, horizontal_deg;
@@ -67,11 +69,24 @@ private:
 	double ground_angle_thresh{5.0 / 180.0 * Pi};
 	ImageType image_type{NGCW};
 
+	//proj image related
+	double voxel_dim{0.1}, sensor_ramge{30.0};
+	double VOXEL_DIM_INV = 1.0 / voxel_dim;
+	int MAT_SIZE{std::ceil(sensor_ramge / voxel_dim)}, CMAT{MAT_SIZE / 2};
+	cv::Mat img_mat;
+	double resize_ratio{3.0};
+	int blur_size{5};
+	double cos_thresh = cos(2.0 * Pi / 180.0);
+	double dist_thresh2{4.5}, dist_thresh1{4.5};
+
+
+
 public:
 	cv::Mat range_mat, angle_mat, smoothed_mat, no_gcw_image, label_mat, dilated, gc_image, contour_image;
 	pcl::PointCloud<pcl::PointR> cloud_ngcw, cloud_contour,cloud_gc;
 
 public:
+	//range image
 	void setCloudInput(pcl::PointCloud<pcl::PointR> cloud_input_);
 	void reset();
 	void toRangeImage();
@@ -87,6 +102,78 @@ public:
 	void toCloud(const cv::Mat& image_mat);
 	void UnprojectPoint(const cv::Mat image, int row, int col, pcl::PointR& pt);
 
+	//proj image
+	void AdjecentDistanceFilter(std::vector<std::vector<cv::Point2f>>& contoursInOut);
+	void TopoFilterContours(std::vector<vector<cv::Point2f>>& contoursInOut);
+	void ExtractContour(const pcl::PointCloud<pcl::PointR>& cur_cloud, vector<vector<Vector3d>>realworld_contour);
+
+	template <typename Point>
+	inline void PointToImgSub(const Point& posIn, int& row_idx, int& col_idx) 
+	{
+		const int c_idx = CMAT;
+		row_idx = c_idx + (int)std::round(posIn.x  * VOXEL_DIM_INV);
+		col_idx = c_idx + (int)std::round(posIn.y * VOXEL_DIM_INV);
+	}
+
+	inline bool IsIdxesInImg(int& row_idx, int& col_idx) 
+	{
+        if (row_idx < 0 || row_idx > MAT_SIZE - 1 || col_idx < 0 || col_idx > MAT_SIZE - 1) {
+            return false;
+        }
+        return true;
+    }
+
+	inline void InternalContoursIdxs(const std::vector<cv::Vec4i>& hierarchy,
+                                     const std::size_t& high_idx,
+                                     std::unordered_set<int>& internal_idxs)
+    {
+        if (hierarchy[high_idx][2] == -1) return;
+        SameAndLowLevelIdxs(hierarchy, hierarchy[high_idx][2], internal_idxs);
+    }
+
+    inline void SameAndLowLevelIdxs(const std::vector<cv::Vec4i>& hierarchy,
+                                    const std::size_t& cur_idx,
+                                    std::unordered_set<int>& remove_idxs)
+    {
+        if (cur_idx == -1) return;
+        int next_idx = cur_idx;
+        while (next_idx != -1) {
+            remove_idxs.insert(next_idx);
+            SameAndLowLevelIdxs(hierarchy, hierarchy[next_idx][2], remove_idxs);
+            next_idx = hierarchy[next_idx][0];
+        }
+    }
+
+	inline float PixelDistance(const cv::Point2f& pre_p, const cv::Point2f& cur_p)
+	{
+		return std::hypotf(pre_p.x - cur_p.x, pre_p.y - cur_p.y);
+	}
+	
+    inline void RemoveWallConnection(const std::vector<cv::Point2f>& contour,
+                                     const cv::Point2f& add_p,
+                                     std::size_t& refined_idx)
+    {
+        if (refined_idx < 2) return;
+        if (!IsPrevWallVertex(contour[refined_idx-2], contour[refined_idx-1], add_p)) {
+            return;
+        } else {
+            -- refined_idx;
+            RemoveWallConnection(contour, add_p, refined_idx);
+        }
+    }
+	    
+	inline bool IsPrevWallVertex(const cv::Point2f& first_p,
+                                 const cv::Point2f& mid_p,
+                                 const cv::Point2f& add_p)
+    {
+        cv::Point2f diff_p1 = first_p - mid_p;
+        cv::Point2f diff_p2 = add_p - mid_p;
+        diff_p1 /= std::hypotf(diff_p1.x, diff_p1.y);
+        diff_p2 /= std::hypotf(diff_p2.x, diff_p2.y);
+        if (abs(diff_p1.dot(diff_p2)) > cos_thresh) 
+			return true;
+        return false;
+    }
 };
 
 
