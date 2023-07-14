@@ -49,6 +49,7 @@ using namespace std;
 using namespace Eigen;
 
 enum Filter {None, SG, Gaussian};
+enum ImageType {NGCW, GC, CONTOUR};
 
 class CloudProcessor
 {
@@ -64,10 +65,11 @@ private:
 	double start_angle_thresh{45.0 / 180.0 * Pi};
 	int step_row{2}, step_col{1};
 	double ground_angle_thresh{5.0 / 180.0 * Pi};
+	ImageType image_type{NGCW};
 
 public:
-	cv::Mat range_mat, angle_mat, smoothed_mat, no_ground_image, label_mat, dilated;
-	pcl::PointCloud<pcl::PointR> cloud_output;
+	cv::Mat range_mat, angle_mat, smoothed_mat, no_gcw_image, label_mat, dilated, gc_image, contour_image;
+	pcl::PointCloud<pcl::PointR> cloud_ngcw, cloud_contour,cloud_gc;
 
 public:
 	void setCloudInput(pcl::PointCloud<pcl::PointR> cloud_input_);
@@ -79,10 +81,10 @@ public:
 	void ApplySavitskyGolaySmoothing() ;
 	cv::Mat GetSavitskyGolayKernel() const;
 	void LabelPixel(uint16_t label, int row_id, int col_id);
-	void GetNeighbors(queue<pair<int, int>>& labeling_queue, const int& cur_row, const int& cur_col);
+	void GetNeighbors(queue<pair<int, int>>& labeling_queue, const int& cur_row, const int& cur_col, const uint16_t label);
 	cv::Mat GetUniformKernel(int window_size, int type) const;
 	void ZeroOutGroundCeillingBFS();
-	void toCloud();
+	void toCloud(const cv::Mat& image_mat);
 	void UnprojectPoint(const cv::Mat image, int row, int col, pcl::PointR& pt);
 
 };

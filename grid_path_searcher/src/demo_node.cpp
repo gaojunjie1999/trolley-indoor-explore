@@ -78,7 +78,7 @@ struct Range {
 CloudProcessor cloud_processor;
 string frame_id_;
 double height_thresh, range_min, range_max;
-ros::Publisher ngc_pub, g_pub, c_pub;
+ros::Publisher ngc_pub, g_pub, c_pub, gc_pub, wall_pub;
 ros::Subscriber odom_sub_, depth_sub_, cloud_sub_;
 ros::Timer vis_timer_;
 //pcl::PointCloud<pcl::PointXYZI> cloud_msg;
@@ -220,6 +220,9 @@ int main(int argc, char** argv)
     vis_timer_ = nh.createTimer(ros::Duration(0.05), visCallback); 
 
     ngc_pub = nh.advertise<sensor_msgs::PointCloud2>("/trolley/lidar/no_ground_ceilling", 10);
+	gc_pub = nh.advertise<sensor_msgs::PointCloud2>("/trolley/lidar/ground_ceilling", 10);
+	wall_pub = nh.advertise<sensor_msgs::PointCloud2>("/trolley/lidar/wall", 10);
+
     g_pub = nh.advertise<sensor_msgs::PointCloud2>("/trolley/lidar/ground", 10);
     c_pub = nh.advertise<sensor_msgs::PointCloud2>("/trolley/lidar/ceilling", 10);
 
@@ -523,14 +526,30 @@ void pointCloudCallback(const sensor_msgs::PointCloud2::ConstPtr& point_msg)
 
 	cloud_processor.setCloudInput(cloud_msg);
 	cloud_processor.processCloud();
-	auto cloud_ng = cloud_processor.cloud_output;
-		cloud_ng.header.frame_id = "map";
-	cloud_ng.height = 1;
-	cloud_ng.width = cloud_ng.points.size();
 	sensor_msgs::PointCloud2 pub_cloud;
-  //publish ground
-  pcl::toROSMsg(cloud_ng, pub_cloud);
-  ngc_pub.publish(pub_cloud);
+	
+	auto cloud_obj = cloud_processor.cloud_ngcw;
+	cloud_obj.header.frame_id = "map";
+	cloud_obj.height = 1;
+	cloud_obj.width = cloud_obj.points.size();
+	pcl::toROSMsg(cloud_obj, pub_cloud);
+	ngc_pub.publish(pub_cloud);
+
+	auto cloud_cg = cloud_processor.cloud_gc;
+	cloud_cg.header.frame_id = "map";
+	cloud_cg.height = 1;
+	cloud_cg.width = cloud_cg.points.size();
+	pcl::toROSMsg(cloud_cg, pub_cloud);
+	gc_pub.publish(pub_cloud);
+
+	auto cloud_wall = cloud_processor.cloud_contour;
+	cloud_wall.header.frame_id = "map";
+	cloud_wall.height = 1;
+	cloud_wall.width = cloud_wall.points.size();
+	pcl::toROSMsg(cloud_wall, pub_cloud);
+	wall_pub.publish(pub_cloud);
+
+	ROS_WARN("%f ms to process 1 frame pcl",(ros::Time::now() - time_begin).toSec() * 1000);
 	return;
 
 
