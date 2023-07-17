@@ -212,6 +212,14 @@ public:
 		cv::imwrite(pic_file, imageContours);
 	}
 
+	// extract contours
+	int max_iter = 10;
+
+
+
+	void EndPointExtraction(const cv::Mat& src, vector<Vector2i>& endpt_vec, vector<Vector2i>& midpt_vec);
+	void cvThin(const cv::Mat& src, cv::Mat& dst, int intera);
+
 };
 
 

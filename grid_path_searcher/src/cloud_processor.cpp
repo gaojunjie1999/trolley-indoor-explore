@@ -317,16 +317,46 @@ void CloudProcessor::ExtractContour(const pcl::PointCloud<pcl::PointR>& cur_clou
             }
         }
     }
-    cv::imwrite("/home/sustech1411/img_before_resize.png", img_mat);
-
+    //cv::imwrite("/home/sustech1411/img_before_resize.png", img_mat);
+ 
     cv::Mat Rimg;
     //resize & blur
     img_mat.convertTo(Rimg, CV_8UC1, 255);
     cv::resize(Rimg, Rimg, cv::Size(), resize_ratio, resize_ratio, cv::InterpolationFlags::INTER_LINEAR);
     cv::imwrite("/home/sustech1411/img_after_resize.png", Rimg);
+    
     cv::boxFilter(Rimg, Rimg, -1, cv::Size(blur_size, blur_size), cv::Point2i(-1, -1), false);
     cv::imwrite("/home/sustech1411/img_after_box_filter.png", Rimg);
 
+    //extract end points
+    vector<Vector2i> end_points, mid_points;
+    /*for (int i = 0; i < Rimg.rows; i++) {
+        for (int j = 0; j < Rimg.cols; j++) {
+            if (Rimg.at<uchar>(i, j) != 0) {
+                cout<<"p2="<<(int)(Rimg.at<uchar>(i, j))<<"    ";
+                
+            }
+        }
+    }*/
+    cv::Mat ske_img;
+    cvThin(Rimg, ske_img, max_iter);
+    cv::imwrite("/home/sustech1411/skeleton.png", ske_img);
+    EndPointExtraction(ske_img, end_points, mid_points);
+
+    
+
+
+
+
+
+
+
+
+
+
+
+
+/*
     //ExtractRefinedContours
     std::vector<std::vector<cv::Point2i>> raw_contours;
     std::vector<vector<cv::Point2f>> refined_contours;
@@ -360,9 +390,229 @@ void CloudProcessor::ExtractContour(const pcl::PointCloud<pcl::PointR>& cur_clou
             Vector2d p = ConvertCVPointToPoint2D(cv_p);
             realworld_contour[i][j] = p;
         }
-    }
+    }*/
 }
 
+void CloudProcessor::cvThin(const cv::Mat& src, cv::Mat& dst, int intera)
+{
+if(src.type()!=CV_8UC1)
+    {
+    printf("只能处理二值或灰度图像\n");
+    return;
+    }
+//非原地操作时候，copy src到dst
+if(dst.data!=src.data)
+    {
+    src.copyTo(dst);
+    }
+
+int i, j, n;
+int width, height;
+width = src.cols -1;
+//之所以减1，是方便处理8邻域，防止越界
+height = src.rows -1;
+int step = src.step;
+int  p2,p3,p4,p5,p6,p7,p8,p9;
+uchar* img;
+bool ifEnd;
+int A1;
+cv::Mat tmpimg;
+//n表示迭代次数
+for(n = 0; n<intera; n++)
+    {
+    dst.copyTo(tmpimg);
+    ifEnd = false;
+    img = tmpimg.data;
+    for(i = 1; i < height; i++)
+        {
+        img += step;
+        for(j =1; j<width; j++)
+            {
+            uchar* p = img + j;
+            A1 = 0;
+            if( p[0] > 0)
+                {
+                if(p[-step]==0&&p[-step+1]>0) //p2,p3 01模式
+                    {
+                    A1++;
+                    }
+                if(p[-step+1]==0&&p[1]>0) //p3,p4 01模式
+                    {
+                    A1++;
+                    }
+                if(p[1]==0&&p[step+1]>0) //p4,p5 01模式
+                    {
+                    A1++;
+                    }
+                if(p[step+1]==0&&p[step]>0) //p5,p6 01模式
+                    {
+                    A1++;
+                    }
+                if(p[step]==0&&p[step-1]>0) //p6,p7 01模式
+                    {
+                    A1++;
+                    }
+                if(p[step-1]==0&&p[-1]>0) //p7,p8 01模式
+                    {
+                    A1++;
+                    }
+                if(p[-1]==0&&p[-step-1]>0) //p8,p9 01模式
+                    {
+                    A1++;
+                    }
+                if(p[-step-1]==0&&p[-step]>0) //p9,p2 01模式
+                    {
+                    A1++;
+                    }
+                p2 = p[-step]>0?1:0;
+                p3 = p[-step+1]>0?1:0;
+                p4 = p[1]>0?1:0;
+                p5 = p[step+1]>0?1:0;
+                p6 = p[step]>0?1:0;
+                p7 = p[step-1]>0?1:0;
+                p8 = p[-1]>0?1:0;
+                p9 = p[-step-1]>0?1:0;
+                if((p2+p3+p4+p5+p6+p7+p8+p9)>1 && (p2+p3+p4+p5+p6+p7+p8+p9)<7  &&  A1==1)
+                    {
+                    if((p2==0||p4==0||p6==0)&&(p4==0||p6==0||p8==0)) //p2*p4*p6=0 && p4*p6*p8==0
+                        {
+                        dst.at<uchar>(i,j) = 0; //满足删除条件，设置当前像素为0
+                        ifEnd = true;
+                        }
+                    }
+                }
+            }
+        }
+    
+    dst.copyTo(tmpimg);
+    img = tmpimg.data;
+    for(i = 1; i < height; i++)
+        {
+        img += step;
+        for(j =1; j<width; j++)
+            {
+            A1 = 0;
+            uchar* p = img + j;
+            if( p[0] > 0)
+                {
+                if(p[-step]==0&&p[-step+1]>0) //p2,p3 01模式
+                    {
+                    A1++;
+                    }
+                if(p[-step+1]==0&&p[1]>0) //p3,p4 01模式
+                    {
+                    A1++;
+                    }
+                if(p[1]==0&&p[step+1]>0) //p4,p5 01模式
+                    {
+                    A1++;
+                    }
+                if(p[step+1]==0&&p[step]>0) //p5,p6 01模式
+                    {
+                    A1++;
+                    }
+                if(p[step]==0&&p[step-1]>0) //p6,p7 01模式
+                    {
+                    A1++;
+                    }
+                if(p[step-1]==0&&p[-1]>0) //p7,p8 01模式
+                    {
+                    A1++;
+                    }
+                if(p[-1]==0&&p[-step-1]>0) //p8,p9 01模式
+                    {
+                    A1++;
+                    }
+                if(p[-step-1]==0&&p[-step]>0) //p9,p2 01模式
+                    {
+                    A1++;
+                    }
+                p2 = p[-step]>0?1:0;
+                p3 = p[-step+1]>0?1:0;
+                p4 = p[1]>0?1:0;
+                p5 = p[step+1]>0?1:0;
+                p6 = p[step]>0?1:0;
+                p7 = p[step-1]>0?1:0;
+                p8 = p[-1]>0?1:0;
+                p9 = p[-step-1]>0?1:0;
+                if((p2+p3+p4+p5+p6+p7+p8+p9)>1 && (p2+p3+p4+p5+p6+p7+p8+p9)<7  &&  A1==1)
+                    {
+                    if((p2==0||p4==0||p8==0)&&(p2==0||p6==0||p8==0)) //p2*p4*p8=0 && p2*p6*p8==0
+                        {
+                        dst.at<uchar>(i,j) = 0; //满足删除条件，设置当前像素为0
+                        ifEnd = true;
+                        }
+                    }
+                }
+            }
+        }
+
+    //如果两个子迭代已经没有可以细化的像素了，则退出迭代
+    if(!ifEnd) break;
+    }
+
+}
+
+void CloudProcessor::EndPointExtraction(const cv::Mat& src, vector<Vector2i>& endpt_vec, vector<Vector2i>& midpt_vec)
+{
+	int col_num = src.cols;
+    int row_num = src.rows;
+    auto dst = src;
+    cv::threshold(dst, dst, 100, 255, cv::ThresholdTypes::THRESH_BINARY);
+
+    for (int i = 0; i < row_num; ++i)
+    {
+        for (int j = 0; j < col_num;++ j)
+        {  
+            int p1 = (int)(src.at<uchar>(i, j));
+
+            if (p1 == 0) 
+                continue;
+            int p2 = (i == 0) ? 0 : (int)(src.at<uchar>(i - 1, j) / 255);
+            int p3 = (i == 0 || j == col_num - 1) ? 0 : (int)(src.at<uchar>(i - 1, j + 1) / 255);
+            int p4 = (j == col_num - 1) ? 0 : (int)(src.at<uchar>(i, j + 1) / 255);
+            int p5 = (i == row_num - 1 || j == col_num - 1) ? 0 : (int)(src.at<uchar>(i + 1, j + 1) / 255);
+            int p6 = (i == row_num - 1) ? 0 : (int)(src.at<uchar>(i + 1, j) / 255);
+            int p7 = (i == row_num - 1 || j == 1) ? 0 : (int)(src.at<uchar>(i + 1, j - 1) / 255);
+            int p8 = (j == 0) ? 0 : (int)(src.at<uchar>(i, j - 1) / 255);
+            int p9 = (i == 0 || j == 0) ?0 : (int)(src.at<uchar>(i - 1, j - 1) / 255);
+            //cout<<p1<<"    "<<p2<<" "<<p3<<" "<<p4<<" "<<p5<<" "<<p6<<" "<<p7<<" "<<p8<<" "<<p9<<endl;
+            if (( p2 + p3 + p4 + p5 + p6 + p7 + p8 + p9) == 1)
+            {	
+                //cout << "(y,x):" << "(" << i << "," << j << ")"<<endl;  
+                Vector2i pt(i, j);
+                endpt_vec.emplace_back(pt);
+            } else if ((p2 + p3 + p4 + p5 + p6 + p7 + p8 + p9) == 2)
+            {
+                //if ((p2 == 1 && p4 == 1) || (p6 == 1 && p4 == 1) || (p2 == 1 && p8 == 1) || (p6 == 1 && p8 == 1)) {
+                if (((p3 == p7 == 1)&&(p5 == p9 == 0)) || ((p5 == p9 == 1) && (p3 == p7 == 0))) {
+                    Vector2i pt(i, j);
+                    midpt_vec.emplace_back(pt);
+                }
+            }
+        }
+    }
+
+	for (const auto& pt : endpt_vec)
+	{
+        cv::Point center;
+		center.y = pt(0);
+		center.x = pt(1);	
+		cv::circle(dst, center, 6, cv::Scalar(155, 0, 0), -10);
+	}
+    
+    for (const auto& pt : midpt_vec)
+	{
+        cv::Point center;
+		center.y = pt(0);
+		center.x = pt(1);	
+		cv::circle(dst, center, 6, cv::Scalar(155, 0, 0));
+	}
+
+    cv::imwrite("/home/sustech1411/img_endpts.png", dst);
+
+
+}
 
 void CloudProcessor::AdjecentDistanceFilter(std::vector<std::vector<cv::Point2f>>& contoursInOut) {
     /* filter out vertices that are overlapped with neighbor */
