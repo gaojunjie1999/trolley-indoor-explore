@@ -75,9 +75,10 @@ private:
 	int MAT_SIZE{std::ceil(sensor_ramge / voxel_dim)}, CMAT{MAT_SIZE / 2};
 	cv::Mat img_mat;
 	double resize_ratio{3.0};
-	int blur_size{5};
+	int blur_size{3};
 	double cos_thresh = cos(2.0 * Pi / 180.0);
 	double dist_thresh2{4.5}, dist_thresh1{4.5};
+	std::vector<cv::Vec4i> refined_hierarchy;
 
 
 
@@ -105,7 +106,7 @@ public:
 	//proj image
 	void AdjecentDistanceFilter(std::vector<std::vector<cv::Point2f>>& contoursInOut);
 	void TopoFilterContours(std::vector<vector<cv::Point2f>>& contoursInOut);
-	void ExtractContour(const pcl::PointCloud<pcl::PointR>& cur_cloud, vector<vector<Vector3d>>realworld_contour);
+	void ExtractContour(const pcl::PointCloud<pcl::PointR>& cur_cloud, vector<vector<Vector2d>>realworld_contour);
 
 	template <typename Point>
 	inline void PointToImgSub(const Point& posIn, int& row_idx, int& col_idx) 
@@ -114,6 +115,15 @@ public:
 		row_idx = c_idx + (int)std::round(posIn.x  * VOXEL_DIM_INV);
 		col_idx = c_idx + (int)std::round(posIn.y * VOXEL_DIM_INV);
 	}
+
+	inline Vector2d ConvertCVPointToPoint2D(const cv::Point2f& cv_p) {
+        Vector2d p;
+        const int c_idx = CMAT;
+        const float ratio = 1.0f;
+        p(0) = (cv_p.y - c_idx) * voxel_dim / ratio;
+        p(1) = (cv_p.x - c_idx) * voxel_dim / ratio;
+        return p;
+    }
 
 	inline bool IsIdxesInImg(int& row_idx, int& col_idx) 
 	{
@@ -174,6 +184,34 @@ public:
 			return true;
         return false;
     }
+
+	void VisContours(std::vector<std::vector<cv::Point2i>> contours, const cv::Mat& origin_img, const string& pic_name)
+	{
+		cv::Mat imageContours = cv::Mat::zeros(origin_img.size(), CV_8UC1);  
+		//cv::Mat Contours= cv::Mat::zeros(origin_img.size(), CV_8UC1);  
+		for(int i = 0;i < contours.size(); i++)  
+		{  
+			/*for(int j = 0; j < contours[i].size(); j++)   
+			{   
+				cv::Point P = cv::Point(contours[i][j].x,contours[i][j].y);  
+				Contours.at<uchar>(P)=255;  
+			}  */
+	
+			//输出hierarchy向量内容  
+			/*char ch[256];  
+			sprintf(ch,"%d",i);  
+			string str=ch;  
+			cout<<"向量hierarchy的第" <<str<<" 个元素内容为："<<endl<<hierarchy[i]<<endl<<endl;  */
+	
+			//绘制轮廓  
+			//cv::drawContours(imageContours,contours,i, cv::Scalar(255), 1, 8, refined_hierarchy);  
+		}  
+		cv::drawContours(imageContours,contours, -1, cv::Scalar(255), 1, 8, refined_hierarchy);
+		string file_name = "/home/sustech1411/";
+		const string pic_file = file_name + pic_name;
+		cv::imwrite(pic_file, imageContours);
+	}
+
 };
 
 

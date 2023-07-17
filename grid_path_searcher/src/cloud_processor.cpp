@@ -296,12 +296,13 @@ cv::Mat CloudProcessor::GetSavitskyGolayKernel() const
   return kernel;
 }
 
-void CloudProcessor::ExtractContour(const pcl::PointCloud<pcl::PointR>& cur_cloud, vector<vector<Vector3d>>realworld_contour)
+void CloudProcessor::ExtractContour(const pcl::PointCloud<pcl::PointR>& cur_cloud, vector<vector<Vector2d>>realworld_contour)
 {
     img_mat = cv::Mat::zeros(MAT_SIZE, MAT_SIZE, CV_32FC1);
     //from 3d cloud to 2d image
     int row_idx, col_idx, inf_row, inf_col;
-    const std::vector<int> inflate_vec{-1, 0, 1};
+    //const std::vector<int> inflate_vec{-1, 0, 1};
+    const std::vector<int> inflate_vec{0};
     for (const auto& pcl_p : cur_cloud.points) {
         PointToImgSub(pcl_p, row_idx, col_idx);
         if (!IsIdxesInImg(row_idx, col_idx)) 
@@ -322,27 +323,44 @@ void CloudProcessor::ExtractContour(const pcl::PointCloud<pcl::PointR>& cur_clou
     //resize & blur
     img_mat.convertTo(Rimg, CV_8UC1, 255);
     cv::resize(Rimg, Rimg, cv::Size(), resize_ratio, resize_ratio, cv::InterpolationFlags::INTER_LINEAR);
-    cv::boxFilter(Rimg, Rimg, -1, cv::Size(blur_size, blur_size), cv::Point2i(-1, -1), false);
     cv::imwrite("/home/sustech1411/img_after_resize.png", Rimg);
+    cv::boxFilter(Rimg, Rimg, -1, cv::Size(blur_size, blur_size), cv::Point2i(-1, -1), false);
+    cv::imwrite("/home/sustech1411/img_after_box_filter.png", Rimg);
 
     //ExtractRefinedContours
     std::vector<std::vector<cv::Point2i>> raw_contours;
     std::vector<vector<cv::Point2f>> refined_contours;
-    std::vector<cv::Vec4i> refined_hierarchy;
-    //refined_contours.clear(), refined_hierarchy.clear();
+  
+    refined_hierarchy.clear();
     cv::findContours(Rimg, raw_contours, refined_hierarchy, 
                      cv::RetrievalModes::RETR_TREE, 
                      cv::ContourApproximationModes::CHAIN_APPROX_TC89_L1);
-                     
+    VisContours(raw_contours, Rimg, "find_contours.png");
+                  
     refined_contours.resize(raw_contours.size());
     for (std::size_t i=0; i<raw_contours.size(); i++) {
         // using Ramer–Douglas–Peucker algorithm url: https://en.wikipedia.org/wiki/Ramer%E2%80%93Douglas%E2%80%93Peucker_algorithm
         cv::approxPolyDP(raw_contours[i], refined_contours[i], dist_thresh1, true);
     }
     TopoFilterContours(refined_contours); 
+    //VisContoursFloat(refined_contours, Rimg, "after_topo_filter.png");
+
     AdjecentDistanceFilter(refined_contours);
+    //VisContours(refined_contours, Rimg, "after_dist_filter.png");
 
-
+    //ConvertContoursToRealWorld
+    const std::size_t C_N = refined_contours.size();
+    realworld_contour.clear(), realworld_contour.resize(C_N);
+    for (std::size_t i = 0; i < C_N; i++) {
+        const auto cv_contour = refined_contours[i];
+        const std::size_t vec_size = cv_contour.size();
+        realworld_contour[i].resize(vec_size);
+        for (std::size_t j = 0; j < vec_size; j++) {
+            cv::Point2f cv_p = cv_contour[j];
+            Vector2d p = ConvertCVPointToPoint2D(cv_p);
+            realworld_contour[i][j] = p;
+        }
+    }
 }
 
 
@@ -368,12 +386,13 @@ void CloudProcessor::AdjecentDistanceFilter(std::vector<std::vector<cv::Point2f>
         if (refined_idx > 1 && PixelDistance(contoursInOut[i].front(), contoursInOut[i].back()) < dist_thresh2) {
             contoursInOut[i].pop_back();
         }
-        if (contoursInOut[i].size() < 3) remove_idxs.insert(i);
+        if (contoursInOut[i].size() < 3) 
+            remove_idxs.insert(i);
     }
     if (!remove_idxs.empty()) { // clear contour with vertices size less that 3
-        std::vector<CVPointStack> temp_contours = contoursInOut;
+        std::vector<vector<cv::Point2f>> temp_contours = contoursInOut;
         contoursInOut.clear();
-        for (int i=0; i<temp_contours.size(); i++) {
+        for (int i = 0; i < temp_contours.size(); i++) {
             if (remove_idxs.find(i) != remove_idxs.end()) continue;
             contoursInOut.push_back(temp_contours[i]);
         }
@@ -390,7 +409,7 @@ void CloudProcessor::TopoFilterContours(std::vector<vector<cv::Point2f>>& contou
         if (poly.size() < 3) {
             remove_idxs.insert(i);
         } else {
-            InternalContoursIdxs(refined_hierarchy_, i, remove_idxs);
+            InternalContoursIdxs(refined_hierarchy, i, remove_idxs);
         }
     }
     if (!remove_idxs.empty()) {

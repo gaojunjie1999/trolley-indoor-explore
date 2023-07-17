@@ -526,6 +526,16 @@ void pointCloudCallback(const sensor_msgs::PointCloud2::ConstPtr& point_msg)
 
 	cloud_processor.setCloudInput(cloud_msg);
 	cloud_processor.processCloud();
+
+	vector<vector<Vector2d>> contours;
+	cloud_processor.ExtractContour(cloud_processor.cloud_contour, contours);
+
+
+	ROS_WARN("%f ms to process 1 frame pcl",(ros::Time::now() - time_begin).toSec() * 1000);
+
+
+
+
 	sensor_msgs::PointCloud2 pub_cloud;
 	
 	auto cloud_obj = cloud_processor.cloud_ngcw;
@@ -549,7 +559,7 @@ void pointCloudCallback(const sensor_msgs::PointCloud2::ConstPtr& point_msg)
 	pcl::toROSMsg(cloud_wall, pub_cloud);
 	wall_pub.publish(pub_cloud);
 
-	ROS_WARN("%f ms to process 1 frame pcl",(ros::Time::now() - time_begin).toSec() * 1000);
+	
 	return;
 
 
