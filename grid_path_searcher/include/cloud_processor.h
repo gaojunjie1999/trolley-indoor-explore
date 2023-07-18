@@ -26,6 +26,11 @@
 #include <pcl/filters/passthrough.h>
 #include <pcl/filters/impl/passthrough.hpp>
 #include <pcl/filters/extract_indices.h>
+#include <pcl/filters/voxel_grid.h>
+#include <pcl/features/normal_3d.h>
+#include <pcl/kdtree/kdtree.h>
+#include <pcl/segmentation/sac_segmentation.h>
+#include <pcl/segmentation/extract_clusters.h>
 //Eigen
 #include <Eigen/Dense>
 //ROS

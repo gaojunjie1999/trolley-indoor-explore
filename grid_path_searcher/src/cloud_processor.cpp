@@ -343,6 +343,8 @@ void CloudProcessor::ExtractContour(const pcl::PointCloud<pcl::PointR>& cur_clou
     cv::imwrite("/home/sustech1411/skeleton.png", ske_img);
     EndPointExtraction(ske_img, end_points, mid_points);
 
+   
+
     
 
 
@@ -558,6 +560,7 @@ void CloudProcessor::EndPointExtraction(const cv::Mat& src, vector<Vector2i>& en
 	int col_num = src.cols;
     int row_num = src.rows;
     auto dst = src;
+    auto dst2 = src;
     cv::threshold(dst, dst, 100, 255, cv::ThresholdTypes::THRESH_BINARY);
 
     for (int i = 0; i < row_num; ++i)
@@ -584,7 +587,10 @@ void CloudProcessor::EndPointExtraction(const cv::Mat& src, vector<Vector2i>& en
                 endpt_vec.emplace_back(pt);
             } else if ((p2 + p3 + p4 + p5 + p6 + p7 + p8 + p9) == 2)
             {
-                //if ((p2 == 1 && p4 == 1) || (p6 == 1 && p4 == 1) || (p2 == 1 && p8 == 1) || (p6 == 1 && p8 == 1)) {
+                if ((p2 == 1 && p4 == 1) || (p6 == 1 && p4 == 1) || (p2 == 1 && p8 == 1) || (p6 == 1 && p8 == 1)) {
+                    Vector2i pt(i, j);
+                    midpt_vec.emplace_back(pt);
+                }
                 if (((p3 == p7 == 1)&&(p5 == p9 == 0)) || ((p5 == p9 == 1) && (p3 == p7 == 0))) {
                     Vector2i pt(i, j);
                     midpt_vec.emplace_back(pt);
@@ -593,12 +599,15 @@ void CloudProcessor::EndPointExtraction(const cv::Mat& src, vector<Vector2i>& en
         }
     }
 
+    vector<cv::Point2i> raw_contour;
+
 	for (const auto& pt : endpt_vec)
 	{
         cv::Point center;
 		center.y = pt(0);
 		center.x = pt(1);	
-		cv::circle(dst, center, 6, cv::Scalar(155, 0, 0), -10);
+		//cv::circle(dst, center, 6, cv::Scalar(155, 0, 0), -10);
+        raw_contour.emplace_back(center);
 	}
     
     for (const auto& pt : midpt_vec)
@@ -606,11 +615,76 @@ void CloudProcessor::EndPointExtraction(const cv::Mat& src, vector<Vector2i>& en
         cv::Point center;
 		center.y = pt(0);
 		center.x = pt(1);	
-		cv::circle(dst, center, 6, cv::Scalar(155, 0, 0));
+		//cv::circle(dst, center, 6, cv::Scalar(155, 0, 0));
+        raw_contour.emplace_back(center);
+	}
+    cv::imwrite("/home/sustech1411/img_endpts.png", dst);
+    
+    //euclidean clustering using lib-pcl
+    vector<vector<cv::Point2i>> raw_contours, refined_contours;
+    pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_filtered(new pcl::PointCloud<pcl::PointXYZ>);
+    pcl::search::KdTree<pcl::PointXYZ>::Ptr tree(new pcl::search::KdTree<pcl::PointXYZ>);
+    for (auto cv_pt : raw_contour) {
+        pcl::PointXYZ pt;
+        pt.x = cv_pt.x;
+        pt.y = cv_pt.y;
+        pt.z = 0;
+        cloud_filtered->points.push_back(pt);
+    }
+    tree->setInputCloud(cloud_filtered);
+ 
+	std::vector<pcl::PointIndices> cluster_indices;
+	pcl::EuclideanClusterExtraction<pcl::PointXYZ> ec;
+	ec.setClusterTolerance(30); 
+	ec.setMinClusterSize(2);
+	ec.setMaxClusterSize(2500);
+	ec.setSearchMethod(tree);
+	ec.setInputCloud(cloud_filtered);
+	ec.extract(cluster_indices);
+    
+    int j = 0;
+    for (std::vector<pcl::PointIndices>::const_iterator it = cluster_indices.begin(); it != cluster_indices.end(); ++it)
+	{   
+        vector<cv::Point2i> point_vec;
+		pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_cluster(new pcl::PointCloud<pcl::PointXYZ>);
+		for (std::vector<int>::const_iterator pit = it->indices.begin(); pit != it->indices.end(); pit++)
+			cloud_cluster->points.push_back(cloud_filtered->points[*pit]); 
+ 
+		cloud_cluster->width = cloud_cluster->points.size();
+		cloud_cluster->height = 1;
+		cloud_cluster->is_dense = true;
+ 
+		std::cout << "当前聚类 "<<j<<" 包含的点云数量: " << cloud_cluster->points.size() << " data points." << std::endl;
+		std::stringstream ss;
+		ss << "cloud_cluster_" << j << ".pcd";
+		j++;
+
+        for (auto pt : cloud_cluster->points) {
+            cv::Point2i cv_pt;
+            cv_pt.x = (int)(pt.x);
+            cv_pt.y = (int)(pt.y);
+            point_vec.emplace_back(cv_pt);
+            //cout<<"pt.x="<<cv_pt.x<<" pt.y="<<cv_pt.y<<endl;
+        }
+        raw_contours.emplace_back(point_vec);
 	}
 
-    cv::imwrite("/home/sustech1411/img_endpts.png", dst);
-
+    refined_contours.resize(raw_contours.size());
+    for (int i = 0; i < raw_contours.size(); i++) {
+        //refined_contours[i] = raw_contours[i];
+        cv::approxPolyDP(raw_contours[i], refined_contours[i], 6.5, true);
+    }
+    for (const auto& vec : refined_contours)
+	{
+        for (const auto& pt : vec) {
+            //cout<<"pt.x="<<pt.x<<" pt.y="<<pt.y<<endl;
+            cv::circle(dst2, pt, 6, cv::Scalar(155, 0, 0));
+        }
+	}
+    cv::imwrite("/home/sustech1411/img_endpts_afterpoly.png", dst2);
+    //cv::drawContours(dst, round_contours, idx, color, cv::LineTypes::LINE_4);
+    
+    
 
 }
 
@@ -727,7 +801,7 @@ void CloudProcessor::toRangeImage()
       int row_i = pt.ring;
       double h_angle = 180.0 / Pi * std::atan2(pt.y, pt.x) + 180;
       int col_i = ceil(h_angle / 360 * col_num) - 1;  
-      //cout<<"pointxyz: "<<pt.x<<" "<<pt.y<<" "<<pt.z<<" "<<pt.intensity<<" row="<<row_i<<" col="<<col_i<<" range="<<range<<endl; 
+      //cout<<"pointxyZ: "<<pt.x<<" "<<pt.y<<" "<<pt.z<<" "<<pt.intensity<<" row="<<row_i<<" col="<<col_i<<" range="<<range<<endl; 
       if(row_i < 0 || row_i >= row_num || col_i < 0 || col_i >= col_num)
           ROS_ERROR("wrong idx num");
 
