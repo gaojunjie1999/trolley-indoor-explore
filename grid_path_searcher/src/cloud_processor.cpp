@@ -323,30 +323,50 @@ void CloudProcessor::ExtractContour(const pcl::PointCloud<pcl::PointR>& cur_clou
     //resize & blur
     img_mat.convertTo(Rimg, CV_8UC1, 255);
     cv::resize(Rimg, Rimg, cv::Size(), resize_ratio, resize_ratio, cv::InterpolationFlags::INTER_LINEAR);
-    cv::imwrite("/home/sustech1411/img_after_resize.png", Rimg);
+    //cv::imwrite("/home/sustech1411/img_after_resize.png", Rimg);
     
     cv::boxFilter(Rimg, Rimg, -1, cv::Size(blur_size, blur_size), cv::Point2i(-1, -1), false);
-    cv::imwrite("/home/sustech1411/img_after_box_filter.png", Rimg);
+    //cv::imwrite("/home/sustech1411/img_after_box_filter.png", Rimg);
 
-    //extract end points
-    vector<Vector2i> end_points, mid_points;
-    /*for (int i = 0; i < Rimg.rows; i++) {
-        for (int j = 0; j < Rimg.cols; j++) {
-            if (Rimg.at<uchar>(i, j) != 0) {
-                cout<<"p2="<<(int)(Rimg.at<uchar>(i, j))<<"    ";
-                
-            }
-        }
-    }*/
+    //extract end points & refine
+    vector<vector<cv::Point2i>> raw_points, refined_points;
     cv::Mat ske_img;
     cvThin(Rimg, ske_img, max_iter);
+    //cv::imwrite("/home/sustech1411/skeleton.png", ske_img);
+    EndPointExtraction(ske_img, raw_points);
+
+    //wall seg fitting  
+   /* cv::Mat contour_pts = cv::Mat::zeros(Rimg.size(), Rimg.type());
+    for (const auto& vec : raw_points)
+	{
+        for (const auto& pt : vec) {
+            contour_pts.at<uchar>(pt.y, pt.x) = 255;
+        }
+	}*/
     cv::imwrite("/home/sustech1411/skeleton.png", ske_img);
-    EndPointExtraction(ske_img, end_points, mid_points);
 
-   
+    vector<cv::Vec4i> lines;
+    cv::Mat res;  
+    cv::HoughLinesP(ske_img, lines, 1, Pi/180, 30, 5, 10);  
+    cout<<"size="<<lines.size()<<endl;
+    //MergeLines(lines);
+    /*for( size_t i = 0; i < lines.size(); i++ )  
+    {  
+        cv::Vec4i l = lines[i];  
+        cv::line(ske_img, cv::Point(l[0], l[1]), cv::Point(l[2], l[3]), cv::Scalar(155, 0, 0), 2);  
+    }  
+    cv::imwrite("/home/sustech1411/lines.png",ske_img);*/
 
+    MergeLines(lines);
+    cout<<"size="<<lines.size()<<endl;
+    for( size_t i = 0; i < lines.size(); i++ )  
+    {  
+        cv::Vec4i l = lines[i];  
+        cv::line(ske_img, cv::Point(l[0], l[1]), cv::Point(l[2], l[3]), cv::Scalar(155, 0, 0), 2);  
+    }  
+    cv::imwrite("/home/sustech1411/lines.png",ske_img);
     
-
+    // dynamic space filter & interpolate (rmv obstacle pt cloud: ob pcl will be replaced if a farther surface in the same scan)
 
 
 
@@ -393,6 +413,67 @@ void CloudProcessor::ExtractContour(const pcl::PointCloud<pcl::PointR>& cur_clou
             realworld_contour[i][j] = p;
         }
     }*/
+}
+
+void CloudProcessor::MergeLines(vector<cv::Vec4i>& lines_inout)
+{
+    //cv::Point center(420, 520);
+    vector<cv::Vec4i> lines_out;
+    std::map<int, int> idx_map;
+
+    for (int i = 0; i < lines_inout.size(); i++) {
+        if (idx_map.find(i) != idx_map.end()) continue;
+        //cout<<"i="<<i<<endl;
+        auto line = lines_inout[i];
+        idx_map[i] = 1e3;
+
+        cv::Point2i start_pt(line[0], line[1]);
+        cv::Point2i end_pt(line[2], line[3]);
+        double length = PixelDistance(start_pt, end_pt);
+        int max_idx = i;
+        for (int j = i + 1; j < lines_inout.size(); j++) {
+            auto next_line = lines_inout[j];
+            if (idx_map.find(j) != idx_map.end()) continue;
+
+            if (CanMergeLine(line, next_line)) {
+                //cout<<"   j="<<j<<endl;
+                idx_map[j] = 1e3;
+                cv::Point2i next_start_pt(next_line[0], next_line[1]);
+                cv::Point2i next_end_pt(next_line[2], next_line[3]);
+                
+                if (PixelDistance(next_start_pt, next_end_pt) > length) {
+                    start_pt = next_start_pt;
+                    end_pt = next_end_pt;
+                    length = PixelDistance(next_start_pt, next_end_pt);
+                    max_idx = j;
+                }
+            }
+        }
+        lines_out.emplace_back(lines_inout[max_idx]);
+    }
+    lines_inout = lines_out;
+}   
+
+inline bool CloudProcessor::CanMergeLine(const cv::Vec4i& line1, const cv::Vec4i& line2)
+{
+    cv::Point2i p11(line1[0], line1[1]);
+    cv::Point2i p12(line1[2], line1[3]);
+    //cout<<"lin1: "<<"("<<p11.x<<","<<p11.y<<")"<<"("<<p12.x<<","<<p12.y<<")"<<endl;
+    double A1 = p12.y - p11.y;
+    double B1 = p11.x - p12.x;
+    double C1 = p12.x * p11.y - p11.x * p12.y;
+
+    cv::Point2i p21(line2[0], line2[1]);
+    cv::Point2i p22(line2[2], line2[3]);
+    //cout<<"lin2: "<<"("<<p21.x<<","<<p21.y<<")"<<"("<<p22.x<<","<<p22.y<<")"<<endl;
+    double d1 = fabs(A1 * p21.x + B1 * p21.y + C1) / sqrt(A1 * A1 + B1 * B1);
+    double d2 = fabs(A1 * p22.x + B1 * p22.y + C1) / sqrt(A1 * A1 + B1 * B1);
+    //cout<<"d="<<d1<<" "<<d2<<endl;
+
+    if (d1 < merge_thresh && d2 < merge_thresh) {
+        return true;
+    }
+    return false;
 }
 
 void CloudProcessor::cvThin(const cv::Mat& src, cv::Mat& dst, int intera)
@@ -555,13 +636,15 @@ for(n = 0; n<intera; n++)
 
 }
 
-void CloudProcessor::EndPointExtraction(const cv::Mat& src, vector<Vector2i>& endpt_vec, vector<Vector2i>& midpt_vec)
+void CloudProcessor::EndPointExtraction(const cv::Mat& src, vector<vector<cv::Point2i>>& raw_pts)
 {
+    int count = 0;
 	int col_num = src.cols;
     int row_num = src.rows;
     auto dst = src;
     auto dst2 = src;
     cv::threshold(dst, dst, 100, 255, cv::ThresholdTypes::THRESH_BINARY);
+    vector<Vector2i> endpt_vec, midpt_vec;
 
     for (int i = 0; i < row_num; ++i)
     {
@@ -587,14 +670,16 @@ void CloudProcessor::EndPointExtraction(const cv::Mat& src, vector<Vector2i>& en
                 endpt_vec.emplace_back(pt);
             } else if ((p2 + p3 + p4 + p5 + p6 + p7 + p8 + p9) == 2)
             {
-                if ((p2 == 1 && p4 == 1) || (p6 == 1 && p4 == 1) || (p2 == 1 && p8 == 1) || (p6 == 1 && p8 == 1)) {
+                /*if ((p2 == 1 && p4 == 1) || (p6 == 1 && p4 == 1) || (p2 == 1 && p8 == 1) || (p6 == 1 && p8 == 1)) {
                     Vector2i pt(i, j);
                     midpt_vec.emplace_back(pt);
                 }
                 if (((p3 == p7 == 1)&&(p5 == p9 == 0)) || ((p5 == p9 == 1) && (p3 == p7 == 0))) {
                     Vector2i pt(i, j);
                     midpt_vec.emplace_back(pt);
-                }
+                }*/
+                Vector2i pt(i, j);
+                    midpt_vec.emplace_back(pt);
             }
         }
     }
@@ -635,8 +720,8 @@ void CloudProcessor::EndPointExtraction(const cv::Mat& src, vector<Vector2i>& en
  
 	std::vector<pcl::PointIndices> cluster_indices;
 	pcl::EuclideanClusterExtraction<pcl::PointXYZ> ec;
-	ec.setClusterTolerance(30); 
-	ec.setMinClusterSize(2);
+	ec.setClusterTolerance(3); 
+	ec.setMinClusterSize(1);
 	ec.setMaxClusterSize(2500);
 	ec.setSearchMethod(tree);
 	ec.setInputCloud(cloud_filtered);
@@ -654,10 +739,10 @@ void CloudProcessor::EndPointExtraction(const cv::Mat& src, vector<Vector2i>& en
 		cloud_cluster->height = 1;
 		cloud_cluster->is_dense = true;
  
-		std::cout << "当前聚类 "<<j<<" 包含的点云数量: " << cloud_cluster->points.size() << " data points." << std::endl;
+		/*std::cout << "当前聚类 "<<j<<" 包含的点云数量: " << cloud_cluster->points.size() << " data points." << std::endl;
 		std::stringstream ss;
 		ss << "cloud_cluster_" << j << ".pcd";
-		j++;
+		j++;*/
 
         for (auto pt : cloud_cluster->points) {
             cv::Point2i cv_pt;
@@ -666,29 +751,75 @@ void CloudProcessor::EndPointExtraction(const cv::Mat& src, vector<Vector2i>& en
             point_vec.emplace_back(cv_pt);
             //cout<<"pt.x="<<cv_pt.x<<" pt.y="<<cv_pt.y<<endl;
         }
+        sort(point_vec.begin(), point_vec.end(), compare_dist);
         raw_contours.emplace_back(point_vec);
 	}
 
     refined_contours.resize(raw_contours.size());
     for (int i = 0; i < raw_contours.size(); i++) {
         //refined_contours[i] = raw_contours[i];
-        cv::approxPolyDP(raw_contours[i], refined_contours[i], 6.5, true);
+        cv::approxPolyDP(raw_contours[i], refined_contours[i], poly_thresh, true);
     }
     for (const auto& vec : refined_contours)
 	{
         for (const auto& pt : vec) {
             //cout<<"pt.x="<<pt.x<<" pt.y="<<pt.y<<endl;
+            count++;
             cv::circle(dst2, pt, 6, cv::Scalar(155, 0, 0));
         }
+        //cv::circle(dst2, cv::Point(420, 520), 15, cv::Scalar(155, 0, 0));
 	}
-    cv::imwrite("/home/sustech1411/img_endpts_afterpoly.png", dst2);
-    //cv::drawContours(dst, round_contours, idx, color, cv::LineTypes::LINE_4);
     
+    cv::imwrite("/home/sustech1411/img_endpts_afterpoly.png", dst2);
+    cout<<count<<" pts before filter"<<endl;
+    //cv::drawContours(dst, round_contours, idx, color, cv::LineTypes::LINE_4);
+    raw_pts = refined_contours;
     
 
 }
 
-void CloudProcessor::AdjecentDistanceFilter(std::vector<std::vector<cv::Point2f>>& contoursInOut) {
+void CloudProcessor::AdjacentDistanceFilter(std::vector<std::vector<cv::Point2i>>& contoursIn) 
+{
+    std::vector<std::vector<cv::Point2i>> contoursOut;
+    for (std::size_t i = 0; i < contoursIn.size(); i++) { 
+        const auto c = contoursIn[i];
+        const std::size_t c_size = c.size();
+        std::vector<cv::Point2i> out_vec;
+
+        if (c.size() < 2) continue;
+        int idx = 0;
+
+        for (std::size_t j = 0; j < c_size; j++) {
+            cv::Point2i p = c[j]; 
+            if (j > 0 && j < c_size - 1) {
+                if (PtDiscard(c, j, out_vec[idx - 1])) continue;           
+            } else {
+                out_vec.emplace_back(p);
+                idx++;
+            }
+        }
+        contoursOut.emplace_back(out_vec);
+        
+    }
+    contoursIn = contoursOut;
+}
+
+inline bool CloudProcessor::PtDiscard(const std::vector<cv::Point2i>& pt_vec, std::size_t idx, const cv::Point2i& pt_pre)
+{
+    auto dist = PixelDistance(pt_vec[idx], pt_pre);
+
+    cv::Point2i diff_p1 = pt_pre - pt_vec[idx];
+    cv::Point2i diff_p2 = pt_vec[idx + 1] - pt_vec[idx];
+    diff_p1 /= std::hypotf(diff_p1.x, diff_p1.y);
+    diff_p2 /= std::hypotf(diff_p2.x, diff_p2.y);
+
+    if ((abs(diff_p1.dot(diff_p2)) < cos_thresh) && (dist < filter_thresh)) {
+        return true;
+    }
+    return false;
+}
+
+void CloudProcessor::AdjecentDistanceFilter(std::vector<std::vector<cv::Point2i>>& contoursInOut) {
     /* filter out vertices that are overlapped with neighbor */
     std::unordered_set<int> remove_idxs;
     for (std::size_t i=0; i<contoursInOut.size(); i++) { 
@@ -696,25 +827,26 @@ void CloudProcessor::AdjecentDistanceFilter(std::vector<std::vector<cv::Point2f>
         const std::size_t c_size = c.size();
         std::size_t refined_idx = 0;
         for (std::size_t j=0; j<c_size; j++) {
-            cv::Point2f p = c[j]; 
-            if (refined_idx < 1 || PixelDistance(contoursInOut[i][refined_idx-1], p) > dist_thresh2) {
-                /** Reduce wall nodes */
+            cv::Point2i p = c[j]; 
+            /*if (refined_idx < 1 || PixelDistance(contoursInOut[i][refined_idx-1], p) > filter_thresh) {
+                
                 RemoveWallConnection(contoursInOut[i], p, refined_idx);
+                RemoveCloseConnection(contoursInOut[i], p, refined_idx, c_size);
                 contoursInOut[i][refined_idx] = p;
                 refined_idx ++;
-            }
+            }*/
         }
         /** Reduce wall nodes */
-        RemoveWallConnection(contoursInOut[i], contoursInOut[i][0], refined_idx);
+        /*RemoveWallConnection(contoursInOut[i], contoursInOut[i][0], refined_idx);
         contoursInOut[i].resize(refined_idx);
-        if (refined_idx > 1 && PixelDistance(contoursInOut[i].front(), contoursInOut[i].back()) < dist_thresh2) {
+        if (refined_idx > 1 && PixelDistance(contoursInOut[i].front(), contoursInOut[i].back()) < filter_thresh) {
             contoursInOut[i].pop_back();
-        }
-        if (contoursInOut[i].size() < 3) 
+        }*/
+        if (contoursInOut[i].size() < 2) 
             remove_idxs.insert(i);
     }
     if (!remove_idxs.empty()) { // clear contour with vertices size less that 3
-        std::vector<vector<cv::Point2f>> temp_contours = contoursInOut;
+        std::vector<vector<cv::Point2i>> temp_contours = contoursInOut;
         contoursInOut.clear();
         for (int i = 0; i < temp_contours.size(); i++) {
             if (remove_idxs.find(i) != remove_idxs.end()) continue;

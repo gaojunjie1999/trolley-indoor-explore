@@ -12,6 +12,7 @@
 #include <ros/ros.h>
 #include <ros/console.h>
 #include <unordered_set>
+#include <map>
 //PCL
 #include <pcl/common/transforms.h>
 #include <pcl/ModelCoefficients.h>
@@ -81,8 +82,8 @@ private:
 	cv::Mat img_mat;
 	double resize_ratio{3.0};
 	int blur_size{3};
-	double cos_thresh = cos(2.0 * Pi / 180.0);
-	double dist_thresh2{4.5}, dist_thresh1{4.5};
+	double cos_thresh = cos(150.0 * Pi / 180.0);
+	double filter_thresh{2.5}, poly_thresh{6.5};
 	std::vector<cv::Vec4i> refined_hierarchy;
 
 
@@ -109,7 +110,7 @@ public:
 	void UnprojectPoint(const cv::Mat image, int row, int col, pcl::PointR& pt);
 
 	//proj image
-	void AdjecentDistanceFilter(std::vector<std::vector<cv::Point2f>>& contoursInOut);
+	void AdjecentDistanceFilter(std::vector<std::vector<cv::Point2i>>& contoursInOut);
 	void TopoFilterContours(std::vector<vector<cv::Point2f>>& contoursInOut);
 	void ExtractContour(const pcl::PointCloud<pcl::PointR>& cur_cloud, vector<vector<Vector2d>>realworld_contour);
 
@@ -159,13 +160,13 @@ public:
         }
     }
 
-	inline float PixelDistance(const cv::Point2f& pre_p, const cv::Point2f& cur_p)
+	inline float PixelDistance(const cv::Point2i& pre_p, const cv::Point2i& cur_p)
 	{
 		return std::hypotf(pre_p.x - cur_p.x, pre_p.y - cur_p.y);
 	}
-	
-    inline void RemoveWallConnection(const std::vector<cv::Point2f>& contour,
-                                     const cv::Point2f& add_p,
+
+    inline void RemoveWallConnection(const std::vector<cv::Point2i>& contour,
+                                     const cv::Point2i& add_p,
                                      std::size_t& refined_idx)
     {
         if (refined_idx < 2) return;
@@ -177,12 +178,12 @@ public:
         }
     }
 	    
-	inline bool IsPrevWallVertex(const cv::Point2f& first_p,
-                                 const cv::Point2f& mid_p,
-                                 const cv::Point2f& add_p)
+	inline bool IsPrevWallVertex(const cv::Point2i& first_p,
+                                 const cv::Point2i& mid_p,
+                                 const cv::Point2i& add_p)
     {
-        cv::Point2f diff_p1 = first_p - mid_p;
-        cv::Point2f diff_p2 = add_p - mid_p;
+        cv::Point2i diff_p1 = first_p - mid_p;
+        cv::Point2i diff_p2 = add_p - mid_p;
         diff_p1 /= std::hypotf(diff_p1.x, diff_p1.y);
         diff_p2 /= std::hypotf(diff_p2.x, diff_p2.y);
         if (abs(diff_p1.dot(diff_p2)) > cos_thresh) 
@@ -219,15 +220,23 @@ public:
 
 	// extract contours
 	int max_iter = 10;
+	double merge_thresh{15};
 
 
-
-	void EndPointExtraction(const cv::Mat& src, vector<Vector2i>& endpt_vec, vector<Vector2i>& midpt_vec);
+	void AdjacentDistanceFilter(std::vector<std::vector<cv::Point2i>>& contoursIn);
+	void EndPointExtraction(const cv::Mat& src, vector<vector<cv::Point2i>>& raw_pts);
 	void cvThin(const cv::Mat& src, cv::Mat& dst, int intera);
+	inline bool PtDiscard(const std::vector<cv::Point2i>& pt_vec, std::size_t idx, const cv::Point2i& pt_pre);
+	void MergeLines(vector<cv::Vec4i>& lines_inout);
+	inline bool CanMergeLine(const cv::Vec4i& line1, const cv::Vec4i& line2);
+
+
+	static bool compare_dist(cv::Point2i a, cv::Point2i b) {
+		//return ((a.x * a.x + a.y * a.y) < (b.x * b.x + b.y * b.y));
+		return a.x < b.x;
+	}
 
 };
-
-
 
 
 #endif
